@@ -1,4 +1,5 @@
 mod capture;
+mod links;
 
 use std::path::PathBuf;
 
@@ -39,6 +40,14 @@ enum Cmd {
         #[arg(long, default_value = "projections")]
         out: PathBuf,
     },
+    /// Retract claims that were wrong (kept in history, no longer active)
+    Retract {
+        claims: Vec<String>,
+        #[arg(long)]
+        reason: String,
+        #[arg(long, default_value = "philip")]
+        author: String,
+    },
     /// Commit history of the current branch
     Log {
         #[arg(short, long, default_value_t = 20)]
@@ -68,6 +77,9 @@ enum Cmd {
         budget: usize,
         #[arg(short, long, default_value_t = 25)]
         n: usize,
+        /// One line per item (~10x cheaper); then `mneme page <id>` for detail
+        #[arg(long)]
+        brief: bool,
     },
     /// Say whether a recall helped: feeds the learning loop
     Feedback {
@@ -100,6 +112,16 @@ enum CaptureCmd {
         #[arg(long, default_value = "person:philip")]
         person: String,
     },
+    /// Links Philip saved (web pages, X posts/accounts, GitHub repos, HF datasets), with notes
+    Links {
+        /// Text file: one URL per line, optional note after it; `# group` lines
+        file: PathBuf,
+        /// Do not fetch links found inside posts
+        #[arg(long)]
+        no_follow: bool,
+        #[arg(long, default_value = "person:philip")]
+        person: String,
+    },
     /// The README of GitHub repos already in memory (deeper source for digest)
     Readme {
         /// owner/name, one or more
@@ -127,6 +149,19 @@ fn main() -> Result<()> {
             let c = repo.commit("mneme/capture-github@0.1", &format!("capture: GitHub stars of {user}"), ops)?;
             println!("{} committed ({n} ops)", c.id);
         }
+        Cmd::Capture { what: CaptureCmd::Links { file, no_follow, person } } => {
+            let text = std::fs::read_to_string(&file)?;
+            let entries = links::parse_file(text.trim_start_matches('\u{feff}'));
+            let (_, state) = repo.state_at(None)?;
+            let (ops, failures) = links::capture(&repo, &state, &entries, &person, !no_follow)?;
+            let n = ops.len();
+            let msg = format!("capture: {} saved links from {}", entries.len(), file.display());
+            let c = repo.commit("mneme/capture-links@0.1", &msg, ops)?;
+            println!("{} committed ({n} ops); {} failed", c.id, failures.len());
+            for f in failures {
+                println!("  failed: {f}");
+            }
+        }
         Cmd::Capture { what: CaptureCmd::Readme { repos } } => {
             let (_, state) = repo.state_at(None)?;
             let ops = capture::readmes(&repo, &state, &repos)?;
@@ -134,13 +169,17 @@ fn main() -> Result<()> {
             let c = repo.commit("mneme/capture-github@0.1", &format!("capture: READMEs of {}", repos.join(", ")), ops)?;
             println!("{} committed ({n} ops)", c.id);
         }
-        Cmd::Recall { question, budget, n } => {
+        Cmd::Recall { question, budget, n, brief } => {
             let q = question.join(" ");
             let (lineage, state) = repo.state_at(None)?;
             let frames = load_frames(&repo.frames_dir())?;
             let head = lineage.last().map(|c| c.id.clone()).unwrap_or_default();
             let r = mneme_core::recall::recall(&state, &q, n);
-            let pkg = mneme_core::recall::render(&state, &frames, &r, &head, budget);
+            let pkg = if brief {
+                mneme_core::recall::render_brief(&state, &frames, &r, &head)
+            } else {
+                mneme_core::recall::render(&state, &frames, &r, &head, budget)
+            };
             let ep = short_hash("e_", format!("{q}{}", now_rfc3339()).as_bytes());
             repo.append_episode(&serde_json::json!({
                 "type": "recall", "id": ep, "time": now_rfc3339(), "head": head, "question": q,
@@ -194,6 +233,22 @@ fn main() -> Result<()> {
                 lineage.len(),
                 out.join("view.html").display()
             );
+        }
+        Cmd::Retract { claims, reason, author } => {
+            let (_, state) = repo.state_at(None)?;
+            let mut ops = vec![];
+            for id in &claims {
+                match state.claims.get(id) {
+                    Some(cs) if cs.status == Status::Active => ops.push(Op::SetStatus {
+                        claim: id.clone(), status: Status::Retracted, reason: Some(reason.clone()), replaced_by: None,
+                    }),
+                    Some(_) => eprintln!("{id}: already not active"),
+                    None => anyhow::bail!("unknown claim {id}"),
+                }
+            }
+            let n = ops.len();
+            let c = repo.commit(&author, &format!("retract {n} claim(s): {reason}"), ops)?;
+            println!("{} committed ({n} retracted)", c.id);
         }
         Cmd::Log { n } => {
             let (lineage, _) = repo.state_at(None)?;

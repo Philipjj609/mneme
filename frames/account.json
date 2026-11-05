@@ -1,0 +1,11 @@
+{
+  "kind": "account",
+  "label": "Account / source",
+  "slots": [
+    { "id": "who", "label": "Who", "relations": ["described_as"], "hint": "how they describe themselves" },
+    { "id": "posts", "label": "Saved posts", "relations": ["in:posted_by"], "hint": "what of theirs Philip saved" },
+    { "id": "focus", "label": "Focus", "relations": ["provides"], "hint": "topics they are a good source for" },
+    { "id": "reach", "label": "Reach", "relations": ["followers"], "hint": "audience size" },
+    { "id": "trust", "label": "Reliability", "relations": ["verdict", "limitation"], "hint": "signal vs hype, from experience" }
+  ]
+}

@@ -8,27 +8,27 @@
 :root {
   --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1f23; --muted: #6b6f78; --line: #e3e1db; --soft: #efede8;
   --accent: #3b5bdb; --fresh: #e8590c;
-  --k-repo: #4c6ef5; --k-concept: #c2255c; --k-project: #2b8a3e; --k-topic: #868e96; --k-owner: #adb5bd; --k-person: #e67700; --k-other: #495057;
+  --k-repo: #4c6ef5; --k-concept: #c2255c; --k-project: #2b8a3e; --k-site: #0c8599; --k-post: #e8590c; --k-stage: #5f3dc4; --k-dataset: #a61e4d; --k-account: #868e96; --k-topic: #868e96; --k-owner: #adb5bd; --k-person: #e67700; --k-other: #495057;
   --f-capability: #4c6ef5; --f-taxonomy: #c2255c; --f-peer: #7048e8; --f-lineage: #0c8599; --f-use: #2b8a3e;
-  --f-meaning: #e67700; --f-bounds: #e03131; --f-topic: #adb5bd; --f-meta: #ced4da; --f-personal: #f59f00; --f-other: #868e96;
+  --f-meaning: #e67700; --f-bounds: #e03131; --f-workflow: #5f3dc4; --f-message: #e8590c; --f-mention: #adb5bd; --f-topic: #adb5bd; --f-meta: #ced4da; --f-personal: #f59f00; --f-other: #868e96;
   --b-observed: #2b8a3e; --b-stated: #1971c2; --b-inferred: #9c36b5; --b-imported: #0c8599; --b-intuited: #e67700;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #14161a; --panel: #1b1e23; --ink: #e9ecef; --muted: #9aa0a8; --line: #2c3036; --soft: #23272d;
     --accent: #748ffc; --fresh: #ff922b;
-    --k-repo: #748ffc; --k-concept: #f06595; --k-project: #51cf66; --k-topic: #868e96; --k-owner: #5c636a; --k-person: #ffa94d; --k-other: #adb5bd;
+    --k-repo: #748ffc; --k-concept: #f06595; --k-project: #51cf66; --k-site: #3bc9db; --k-post: #ff922b; --k-stage: #b197fc; --k-dataset: #f783ac; --k-account: #868e96; --k-topic: #868e96; --k-owner: #5c636a; --k-person: #ffa94d; --k-other: #adb5bd;
     --f-capability: #748ffc; --f-taxonomy: #f06595; --f-peer: #9775fa; --f-lineage: #3bc9db; --f-use: #51cf66;
-    --f-meaning: #ffa94d; --f-bounds: #ff6b6b; --f-topic: #5c636a; --f-meta: #495057; --f-personal: #fcc419; --f-other: #868e96;
+    --f-meaning: #ffa94d; --f-bounds: #ff6b6b; --f-workflow: #b197fc; --f-message: #ff922b; --f-mention: #5c636a; --f-topic: #5c636a; --f-meta: #495057; --f-personal: #fcc419; --f-other: #868e96;
     --b-observed: #51cf66; --b-stated: #4dabf7; --b-inferred: #da77f2; --b-imported: #3bc9db; --b-intuited: #ffa94d;
   }
 }
 :root[data-theme="dark"] {
   --bg: #14161a; --panel: #1b1e23; --ink: #e9ecef; --muted: #9aa0a8; --line: #2c3036; --soft: #23272d;
   --accent: #748ffc; --fresh: #ff922b;
-  --k-repo: #748ffc; --k-concept: #f06595; --k-project: #51cf66; --k-topic: #868e96; --k-owner: #5c636a; --k-person: #ffa94d; --k-other: #adb5bd;
+  --k-repo: #748ffc; --k-concept: #f06595; --k-project: #51cf66; --k-site: #3bc9db; --k-post: #ff922b; --k-stage: #b197fc; --k-dataset: #f783ac; --k-account: #868e96; --k-topic: #868e96; --k-owner: #5c636a; --k-person: #ffa94d; --k-other: #adb5bd;
   --f-capability: #748ffc; --f-taxonomy: #f06595; --f-peer: #9775fa; --f-lineage: #3bc9db; --f-use: #51cf66;
-  --f-meaning: #ffa94d; --f-bounds: #ff6b6b; --f-topic: #5c636a; --f-meta: #495057; --f-personal: #fcc419; --f-other: #868e96;
+  --f-meaning: #ffa94d; --f-bounds: #ff6b6b; --f-workflow: #b197fc; --f-message: #ff922b; --f-mention: #5c636a; --f-topic: #5c636a; --f-meta: #495057; --f-personal: #fcc419; --f-other: #868e96;
   --b-observed: #51cf66; --b-stated: #4dabf7; --b-inferred: #da77f2; --b-imported: #3bc9db; --b-intuited: #ffa94d;
 }
 * { box-sizing: border-box; }
@@ -174,8 +174,8 @@ const KINDS = [...new Set(D.anchors.map(a => a.kind))].sort();
 const FAMS = [...new Set(D.claims.map(c => c.family))].sort((a, b) => D.meta.families.indexOf(a) - D.meta.families.indexOf(b));
 const BASES = ['observed', 'stated', 'inferred', 'imported', 'intuited'].filter(b => D.claims.some(c => c.basis === b));
 const show = {
-  kinds: new Set(KINDS.filter(k => !['topic', 'owner', 'person'].includes(k))),
-  fams: new Set(FAMS.filter(f => !['meta', 'topic', 'personal'].includes(f))),
+  kinds: new Set(KINDS.filter(k => !['topic', 'owner', 'person', 'account'].includes(k))),
+  fams: new Set(FAMS.filter(f => !['meta', 'topic', 'personal', 'mention'].includes(f))),
   bases: new Set(BASES),
 };
 const kindColor = k => css('--k-' + k) || css('--k-other');
@@ -199,7 +199,8 @@ function computeState() {
     (byAbout.get(c.about) || byAbout.set(c.about, []).get(c.about)).push(c);
     if (c.vk === 'anchor') (byTarget.get(c.v) || byTarget.set(c.v, []).get(c.v)).push(c);
   }
-  const alive = new Set(D.anchors.filter(a => a.introduced <= T).map(a => a.id));
+  // a thing is present when it entered memory and something active is still said about or to it
+  const alive = new Set(D.anchors.filter(a => a.introduced <= T && (byAbout.has(a.id) || byTarget.has(a.id))).map(a => a.id));
   cur = { active, byAbout, byTarget, history, alive };
 }
 function profile(id) {
@@ -245,7 +246,7 @@ function computeMapParents() {
   for (const c of D.claims) {
     if (c.status !== 'active' || c.vk !== 'anchor' || !A.has(c.v)) continue;
     const a = A.get(c.about); if (!a) continue;
-    const ok = (a.kind === 'concept' && c.relation === 'part_of') || (a.kind === 'repo' && c.relation === 'provides');
+    const ok = (['concept', 'stage'].includes(a.kind) && c.relation === 'part_of') || (['repo', 'site', 'post', 'dataset'].includes(a.kind) && c.relation === 'provides');
     if (!ok) continue;
     const s = c.confidence ?? 0.9;
     if (!best.has(a.id) || s > best.get(a.id)) { best.set(a.id, s); mapParent.set(a.id, c.v); }

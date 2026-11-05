@@ -1,0 +1,12 @@
+{
+  "kind": "dataset",
+  "label": "Dataset",
+  "slots": [
+    { "id": "purpose", "label": "What it contains", "relations": ["described_as", "purpose"], "hint": "content and size" },
+    { "id": "capability", "label": "Good for", "relations": ["provides"], "hint": "what it can train or test" },
+    { "id": "access", "label": "License & access", "relations": ["license", "pricing"], "hint": "may we use it, and how" },
+    { "id": "fit", "label": "Fit for our projects", "relations": ["relevant_to"], "hint": "where it could serve us" },
+    { "id": "limits", "label": "Limits & risks", "relations": ["limitation", "failure_mode"], "hint": "quality, bias, legal" },
+    { "id": "adoption", "label": "Adoption", "relations": ["downloads"], "hint": "how used" }
+  ]
+}

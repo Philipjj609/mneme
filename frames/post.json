@@ -1,0 +1,16 @@
+{
+  "kind": "post",
+  "label": "Post",
+  "slots": [
+    { "id": "author", "label": "Author", "relations": ["posted_by"], "hint": "who said it" },
+    { "id": "says", "label": "What it says", "relations": ["says"], "hint": "the words, verbatim" },
+    { "id": "claims", "label": "Claims", "relations": ["claims"], "hint": "what it asserts is true or works" },
+    { "id": "teaches", "label": "Lesson", "relations": ["teaches"], "hint": "the transferable takeaway" },
+    { "id": "points_to", "label": "Points to", "relations": ["links_to", "mentions", "in:listed_in"], "hint": "tools, repos, sites it introduces" },
+    { "id": "about", "label": "About", "relations": ["provides", "instance_of"], "hint": "which capability or topic it is about" },
+    { "id": "fit", "label": "Fit for our projects", "relations": ["relevant_to"], "hint": "why it matters to us" },
+    { "id": "reach", "label": "Reach", "relations": ["likes"], "hint": "how widely it landed" },
+    { "id": "why_saved", "label": "Why Philip saved it", "relations": ["note"], "hint": "his note" },
+    { "id": "limits", "label": "Caveats", "relations": ["limitation", "has_media", "capture_status"], "hint": "what the text alone can't show (video), hype, unverified claims" }
+  ]
+}

@@ -14,7 +14,7 @@ Status 2026-11-05: M0 done. 77 stars captured, 2 digests, 651 anchors, 1,431 cla
 - [x] **Projections** (regenerable, never authoritative): `graph`/`view.html`, Karpathy-style wiki pages + `index.md` + `log.md`.
 - [x] **Visual explorer**: four views of the same memory (Graph, Clusters, Comprehension, History), a time slider over commits, layer and kind filters, a detail panel with evidence and frontier.
 
-## M1 — Feed it everything Philip saved
+## M1 — Feed it everything Philip saved (done 2026-11-05)
 - Capture adapters: URL/web page, X post (via Agent-Reach or a paste), GitHub repo README, local file/folder, Drive doc.
 - Digest proposals for each batch. Review the graph together.
 - `mneme frontier`: rank empty slots by importance into a research agenda.

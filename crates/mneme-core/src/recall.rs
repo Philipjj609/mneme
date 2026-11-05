@@ -22,6 +22,7 @@ const STOP: &[&str] = &[
     "could", "should", "would", "will", "i", "me", "my", "we", "our", "you", "your", "it", "this",
     "that", "these", "those", "based", "explain", "tell", "use", "using", "best", "way", "ways",
     "make", "give", "show", "know", "want", "need", "some", "any", "all", "get", "good", "into",
+    "resource", "resources", "tool", "tools", "thing", "things", "stuff", "step", "help", "like", "look",
 ];
 
 pub fn terms(text: &str) -> Vec<String> {
@@ -47,8 +48,12 @@ fn kind_weight(kind: &str) -> f32 {
     match kind {
         "concept" => 1.5,
         "project" => 1.2,
-        "repo" => 1.0,
+        "stage" => 1.2,
+        "repo" | "site" => 1.0,
+        "dataset" => 0.9,
+        "post" => 0.8,
         "topic" => 0.7,
+        "account" => 0.4,
         _ => 0.15,
     }
 }
@@ -57,6 +62,9 @@ fn kind_weight(kind: &str) -> f32 {
 fn rel_weight(rel: &str) -> f32 {
     match rel {
         "provides" | "implements" => 0.8,
+        "used_at_stage" => 0.7,
+        "instance_of" | "mentions" => 0.45,
+        "links_to" | "listed_in" | "precedes" => 0.3,
         "needs" | "part_of" => 0.6,
         "alternative_to" | "complements" | "builds_on" | "tagged" => 0.5,
         "relevant_to" | "used_in" | "uses" => 0.4,
@@ -105,7 +113,12 @@ pub fn recall(state: &State, query: &str, max_items: usize) -> RecallResult {
     };
 
     // --- recognize: BM25 over anchors (name field counts triple) ---
-    let ids: Vec<&Id> = state.anchors.keys().collect();
+    // Only things something is still said about (retracted-only anchors drop out).
+    let ids: Vec<&Id> = state
+        .anchors
+        .keys()
+        .filter(|id| state.about(id).next().is_some() || state.pointing_to(id).next().is_some())
+        .collect();
     let docs: Vec<Vec<String>> = ids
         .iter()
         .map(|id| {
@@ -201,7 +214,7 @@ pub fn recall(state: &State, query: &str, max_items: usize) -> RecallResult {
         .into_iter()
         .filter(|(id, _)| {
             let k = state.anchors.get(id).map(|a| a.anchor.kind.as_str()).unwrap_or("");
-            matches!(k, "concept" | "repo" | "project")
+            matches!(k, "concept" | "repo" | "project" | "site" | "post" | "dataset" | "stage")
         })
         .map(|(id, score)| Item {
             direct: direct.get(&id).map(|d| d.0 / max).unwrap_or(0.0),
@@ -268,6 +281,28 @@ fn render_item(state: &State, frames: &[Frame], it: &Item, rank: usize) -> Strin
         }
     }
     s
+}
+
+/// One line per item: the cheapest useful view (~25 tokens each). Use first; fetch detail with
+/// `mneme page <id>` or a full recall only where needed (progressive disclosure).
+pub fn render_brief(state: &State, frames: &[Frame], r: &RecallResult, head: &str) -> Package {
+    let mut md = format!("recall: {} · memory {head}\n", r.query);
+    let mut included = vec![];
+    for it in &r.items {
+        let a = &state.anchors[&it.id].anchor;
+        let fills = frames.iter().find(|f| f.kind == a.kind).map(|f| frames::profile(f, state, &a.id));
+        let cov = fills.as_ref().map(|f| frames::coverage(f)).unwrap_or(0.0);
+        let gaps: Vec<&str> = fills.as_ref().map(|f| f.iter().filter(|x| x.claims.is_empty()).map(|x| x.slot.id.as_str()).collect()).unwrap_or_default();
+        let summary: String = a.summary.as_deref().unwrap_or("").chars().take(90).collect();
+        let understood = if fills.is_some() { format!("{:.0}%", cov * 100.0) } else { "—".into() };
+        let _ = writeln!(md, "- {} [{}] {} · {} · unknown: {}", a.id, a.kind, understood, summary.replace('\n', " "),
+            if gaps.is_empty() { "—".to_string() } else { gaps.join(",") });
+        included.push(it.id.clone());
+    }
+    if r.items.is_empty() {
+        md.push_str("nothing in memory matches: unexplored area\n");
+    }
+    Package { markdown: md, included, omitted: vec![] }
 }
 
 pub struct Package {

@@ -1,64 +1,154 @@
 # mneme
 
-**A memory that comprehends.** One append-only log of claims, with git-like history. Everything else (graph, wiki pages, indexes, the visual explorer) is a view compiled from that log.
+**A memory for you and your AI agents that knows what it knows, what it doesn't, and where each piece came from.**
 
-- **Claims, not notes.** Every statement records where it comes from (`observed · stated · inferred · imported · intuited`), its stance (`is · should · could · canon · hypothetical`), its scope, when it was true, its evidence and its confidence.
-- **History like git.** Commits are content-addressed and chained, and branches are cheap. You can `diff` two points, or rebuild the memory as it was at any commit. Nothing is overwritten: a new value *supersedes* the old one, and the old one stays in history.
-- **Comprehension you can measure.** Each kind of thing has a *frame*, a list of what understanding it involves (purpose, mechanism, alternatives, limits…). Filled slots are what we know. **Empty slots are the frontier**, which becomes the research agenda.
-- **Many views of one memory.** Graph, clusters, comprehension map, history, and Karpathy-style markdown pages. All regenerable.
+Most "AI memory" is one of three things: a folder of markdown notes, a vector database, or a knowledge graph. Each is good at one thing and bad at the rest, and none of them can tell you how well something is *understood*. mneme takes a different route:
 
-Design: [docs/DESIGN.md](docs/DESIGN.md) · Plan: [docs/PLAN.md](docs/PLAN.md) · How things are tracked: [docs/TRACKING.md](docs/TRACKING.md)
+- **One append-only log of claims.** Every statement records where it came from (`observed` by a tool · `stated` by a source · `inferred` by a model, with a confidence value · `imported` · `intuited`), its stance (`is` · `should` · `could` · `canon` · `hypothetical`), its scope, when it was true, and its evidence.
+- **Git-like history.** Commits are content-addressed and chained, and branches are cheap. You can `diff` two points, or rebuild the memory as it was at any commit. Nothing is overwritten: a changed value *supersedes* the old one, which stays in history.
+- **Comprehension you can measure.** Each kind of thing (tool, concept, post, project…) has a *frame*: the slots that understanding it consists of (purpose, mechanism, alternatives, limits…). Filled slots are what's known. **Empty slots are named unknowns**, and they become the research agenda.
+- **Every format is a view.** Graph, nested map, clusters, comprehension grid, history timeline and markdown wiki pages are all compiled from the log and rebuilt whenever you like.
+- **Cheap for AI.** Agents ask through `recall`: a budgeted briefing with *why* each item is included and what is *not* known, or a one-line-per-item `--brief` view at ~25 tokens per item. Every recall is logged and can be rated, which is the signal for recall that learns.
 
-The explorer's graph has three modes. **Map** shows nested boxes (category → concept → tools), with edges only for the selection. **Network** is a force layout of all links. **Focus** shows only the selection and its neighbours.
+> Status: early but working (Nov 2026). The author's own memory ships in this repo as the live example: 840+ things and 2,600+ claims from saved GitHub stars, web tools, X posts and articles. Design: [docs/DESIGN.md](docs/DESIGN.md) · Plan: [docs/PLAN.md](docs/PLAN.md).
 
-## Use
+---
+
+## Quick start
+
+Requires [Rust](https://rustup.rs) (stable). Works on Windows, macOS and Linux.
 
 ```bash
-cargo build --release            # binary: target/release/mneme(.exe)
-mneme init                       # creates memory/
-mneme capture github-stars --user Philipjj609
-mneme digest proposals/<file>.json   # a model's interpretation, validated + evidence-linked
-mneme build                      # projections/view.html, projections/wiki/, graph.json
+git clone https://github.com/Philipjj609/mneme
+cd mneme
+cargo build --release              # binary: target/release/mneme (mneme.exe on Windows)
+./target/release/mneme status      # the bundled example memory
+./target/release/mneme recall "how do I make a website that doesn't look generic" --brief
+./target/release/mneme build       # writes projections/view.html
+python -m http.server 4173 --directory projections   # open http://localhost:4173/view.html
 ```
 
-To browse, open `projections/view.html` (it needs internet once, for the graph library), or serve it:
-`python -m http.server 4173 --directory projections` → http://localhost:4173/view.html
+### Start your own memory
 
-| Command | What it does |
-|---|---|
-| `status` | branch, head, counts |
-| `log`, `show <commit>` | history and what a commit did |
-| `diff <a> <b>` | what changed between commits or branches |
-| `branch [name] [--at x]`, `switch <name>` | alternative lines of memory (what-ifs, experiments) |
-| `build --at <commit>` | views of the memory as it was then |
-| `recall "<question>" [--budget 4000]` | ask the memory: a context package of what's known, why each item is there, and what is NOT known; logged as an episode |
-| `feedback <episode> good\|partial\|bad [--used ids] [--missing "…"]` | rate a recall (training signal for recall that learns) |
-| `capture readme owner/name …` | add READMEs of repos in memory as deeper sources to digest |
-| `page <anchor>` | what is known about one thing, slot by slot |
-| `frontier [--kind repo]` | most connected, least understood things: the research agenda |
-
-## Layout
-
-```
-memory/log.jsonl      the memory — one commit per line (commit this to git)
-memory/refs.json      branches + HEAD
-memory/sources/       raw captured evidence (API payloads, proposals)
-frames/               comprehension frames per kind
-proposals/            digest proposals (model-written interpretations)
-projections/          generated views (gitignored; rebuild any time)
-crates/mneme-core     model, log, state replay, frames, digest, projections, viewer
-crates/mneme-cli      the `mneme` command, capture adapters
+```bash
+mkdir my-memory && cd my-memory
+mneme init                                   # creates memory/ (copy frames/ from this repo too)
+mneme capture github-stars --user <you>      # your starred repos, as observed facts
+mneme capture links saved.txt                # any links: web pages, X posts, GitHub, Hugging Face
+mneme build
 ```
 
-## Digest proposals
+`saved.txt` takes one URL per line, with an optional note after it. `# from <url>` heads a group of links that came from that post:
 
-Interpretation is written as a proposal, not straight into memory:
+```
+https://github.com/morluto/rea
+https://x.com/someone/status/123 orchestrate sub agents
+# from https://x.com/someone/status/456
+https://ui.shadcn.com
+```
+
+---
+
+## How it works
+
+```
+capture  ──►  facts (observed / stated), each with its source kept in memory/sources/
+digest   ──►  interpretation from a model or a person, validated and evidence-linked
+recall   ──►  a briefing for a question: recognize → follow links → package (+ unknowns)
+feedback ──►  did it help? (episodes.jsonl, the learning signal)
+build    ──►  graph · map · clusters · comprehension · history · wiki   (all regenerable)
+```
+
+**Capture** records only what changed. Asking GitHub again only commits new star counts, which supersede the old ones. It supports:
+- GitHub stars, repos and READMEs
+- web pages (title, description, readable text)
+- X posts, including the full text of X articles, via the public fxtwitter API, with links inside a post followed one level
+- X profiles
+- Hugging Face datasets
+
+**Digest** is how interpretation gets in. A model (or you) writes a proposal file. mneme rejects unknown subjects and id-like typos, links known ids, attaches evidence automatically, and archives the proposal as a source. The protocol for doing this well is [docs/DIGEST.md](docs/DIGEST.md). It places every item on each axis: what it is, what it provides, **at which stage of a workflow** you'd use it, access/price, peers, fit for your projects, and the lesson a post teaches.
 
 ```json
 { "author": "claude-opus-5-5", "message": "…", "basis": "inferred", "confidence": 0.7, "evidence": "auto",
   "anchors": [ { "id": "concept:agent-memory", "name": "Agent memory", "summary": "…" } ],
   "claims": [ ["repo:vectorize-io/hindsight", "provides", "concept:agent-memory", 0.95],
-              { "about": "…", "relation": "verdict", "value": "…", "basis": "stated", "stance": "should" } ] }
+              { "about": "site:designmd.ai", "relation": "used_at_stage", "value": "stage:design-system" },
+              { "about": "…", "relation": "mechanism", "value": "…", "basis": "stated", "evidence": ["s_…"] } ] }
 ```
 
-mneme rejects unknown subjects. A string that names a known anchor becomes a link. `"evidence": "auto"` cites the observed sources behind both ends of a claim. The proposal itself is archived as a source. Later, any model will produce this same format automatically.
+**Recall** needs no model. It scores things by keyword relevance (BM25), then spreads along meaningful links (provides, used at stage, alternative to, needs…) weighted by confidence. It returns ranked items with the path that brought each one in, what's known slot by slot, and what's unknown. A model reads that and answers.
+
+---
+
+## Use it from an AI agent (Claude Code, Codex, Cursor…)
+
+Install the skill so your agent asks the memory before searching, and writes back what it learns:
+
+```bash
+# Claude Code (per user); other agents: copy skills/mneme into their skills folder
+cp -r skills/mneme ~/.claude/skills/mneme
+```
+
+The skill ([skills/mneme/SKILL.md](skills/mneme/SKILL.md)) teaches the cheap-first loop: `recall --brief`, then `page <id>` only where needed, then a full `recall` only if necessary, then rate it with `feedback`. Agents working *on* this repo follow [AGENTS.md](AGENTS.md).
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `init` | create `memory/` here |
+| `capture github-stars --user U` | starred repos as observed facts |
+| `capture links <file> [--no-follow]` | web pages, X posts/articles/profiles, GitHub repos (+README), HF datasets, with your notes |
+| `capture readme owner/name …` | READMEs of repos already in memory |
+| `digest <proposal.json>` | commit an interpretation (validated, evidence-linked) |
+| `recall "<question>" [--brief] [--budget N]` | briefing for a question; logged as an episode |
+| `feedback <episode> good\|partial\|bad [--used ids] [--missing "…"]` | rate a recall |
+| `page <id>` | everything known about one thing, slot by slot |
+| `frontier [--kind K]` | most-connected, least-understood things: what to research next |
+| `retract <claim>… --reason "…"` | withdraw wrong claims (kept in history) |
+| `status` · `log` · `show <commit>` · `diff <a> <b>` | history |
+| `branch [name] [--at x]` · `switch <name>` | alternative lines of memory (what-ifs) |
+| `build [--at <commit>]` | regenerate views, optionally as the memory was then |
+
+## The explorer
+
+`projections/view.html` gives four views of the same memory, with a time slider over commits:
+
+- **Graph**, in three modes:
+  - **Map:** nested boxes (category → concept → tools/sites/posts); edges appear only for what you select.
+  - **Network:** a force layout of all links.
+  - **Focus:** the selection and its neighbours, in rings.
+- **Clusters:** capabilities with what provides them, and what could serve each project.
+- **Comprehension:** a grid of filled vs empty slots, coloured by the strongest basis.
+- **History:** every commit and what it changed.
+
+Click anything to see what's known about it, the evidence, what's unknown, and its past values.
+
+## Layout
+
+```
+memory/log.jsonl      the memory — one commit per line (append-only)
+memory/refs.json      branches + HEAD
+memory/sources/       captured evidence (API payloads, pages as text, READMEs, proposals) —
+                      local only, not in git: it holds copies of third-party content. Every
+                      source keeps its URL and content hash in the log; re-capture to rebuild it.
+memory/episodes.jsonl recall + feedback log
+frames/               comprehension frames per kind of thing
+proposals/            digest proposals (interpretations)
+inbox/                link lists as they were pasted
+skills/mneme/         agent skill
+crates/mneme-core     model, log, replay, frames, digest, recall, projections, viewer
+crates/mneme-cli      the `mneme` command and capture adapters
+```
+
+## Honest limits
+
+- Recall matches keywords before following links, so paraphrases ("make it feel premium") need embeddings (planned).
+- Ratings are recorded, but recall doesn't learn from them yet (planned).
+- Pages rendered by JavaScript capture little text. Some sites block automated fetches, and those are marked "fetch failed" rather than guessed.
+- Video content in posts isn't transcribed. Posts are marked when their substance is in a video.
+
+## License
+
+MIT OR Apache-2.0, at your option.

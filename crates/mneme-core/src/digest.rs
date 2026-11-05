@@ -101,9 +101,21 @@ pub fn ops_from_proposal(state: &State, p: &Proposal, proposal_source: Source) -
     Ok(ops)
 }
 
+fn looks_like_id(s: &str) -> bool {
+    const KINDS: &[&str] = &[
+        "concept", "repo", "site", "post", "project", "stage", "account", "dataset", "topic", "owner", "person",
+    ];
+    match s.split_once(':') {
+        Some((k, rest)) => KINDS.contains(&k) && !rest.is_empty() && !rest.contains(char::is_whitespace),
+        None => false,
+    }
+}
+
 fn resolve_value(sim: &State, v: &J) -> Result<Value> {
     Ok(match v {
         J::String(s) if sim.anchors.contains_key(s) => Value::Anchor(s.clone()),
+        // Looks like an id but names nothing known: almost always a typo or a missing anchor.
+        J::String(s) if looks_like_id(s) => bail!("value '{s}' looks like an anchor id but no such anchor exists"),
         J::String(s) => Value::Text(s.clone()),
         J::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
         J::Bool(b) => Value::Bool(*b),

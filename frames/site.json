@@ -1,0 +1,18 @@
+{
+  "kind": "site",
+  "label": "Web tool / resource",
+  "slots": [
+    { "id": "purpose", "label": "Purpose", "relations": ["described_as", "purpose"], "hint": "what it is for" },
+    { "id": "type", "label": "Type of resource", "relations": ["instance_of"], "hint": "gallery, component library, generator, course, builder…" },
+    { "id": "capability", "label": "Capability", "relations": ["provides"], "hint": "which capability it serves" },
+    { "id": "stage", "label": "Workflow stage", "relations": ["used_at_stage"], "hint": "when in the making of something you reach for it" },
+    { "id": "mechanism", "label": "How it works", "relations": ["mechanism"], "hint": "what you actually do with it" },
+    { "id": "access", "label": "Access & price", "relations": ["pricing", "license"], "hint": "free, freemium, paid, open source" },
+    { "id": "alternatives", "label": "Alternatives", "relations": ["alternative_to", "in:alternative_to"], "hint": "what else does the same job" },
+    { "id": "complements", "label": "Works with", "relations": ["complements", "in:complements", "builds_on"], "hint": "what it pairs with" },
+    { "id": "fit", "label": "Fit for our projects", "relations": ["relevant_to", "used_in"], "hint": "where it could serve us" },
+    { "id": "limits", "label": "Limits", "relations": ["limitation", "failure_mode"], "hint": "where it falls short" },
+    { "id": "found", "label": "How we found it", "relations": ["in:links_to", "listed_in", "note"], "hint": "which post or list pointed to it, Philip's note" },
+    { "id": "verdict", "label": "Our verdict", "relations": ["verdict", "tried"], "hint": "have we used it, and how did it go" }
+  ]
+}
