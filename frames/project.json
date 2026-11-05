@@ -1,0 +1,14 @@
+{
+  "kind": "project",
+  "label": "Project",
+  "slots": [
+    { "id": "purpose", "label": "Purpose", "relations": ["purpose", "described_as"], "hint": "what it is and why" },
+    { "id": "status", "label": "Status", "relations": ["status"], "hint": "where it stands now" },
+    { "id": "needs", "label": "Needs", "relations": ["needs"], "hint": "capabilities it requires" },
+    { "id": "builds_on", "label": "Builds on", "relations": ["builds_on", "uses"], "hint": "what it is made from" },
+    { "id": "candidates", "label": "Candidate tools", "relations": ["in:relevant_to", "in:used_in"], "hint": "saved tools that could serve it" },
+    { "id": "relations", "label": "Related projects", "relations": ["feeds", "in:feeds", "in:builds_on"], "hint": "how it connects to the other projects" },
+    { "id": "decisions", "label": "Decisions", "relations": ["decision"], "hint": "what is settled, and why" },
+    { "id": "questions", "label": "Open questions", "relations": ["question"], "hint": "what is unresolved" }
+  ]
+}

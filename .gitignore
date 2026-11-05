@@ -1,0 +1,3 @@
+target/
+projections/
+.claude/settings.local.json

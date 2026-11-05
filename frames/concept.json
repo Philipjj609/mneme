@@ -1,0 +1,15 @@
+{
+  "kind": "concept",
+  "label": "Concept / capability",
+  "slots": [
+    { "id": "definition", "label": "Definition", "relations": ["defined_as"], "hint": "what it is" },
+    { "id": "purpose", "label": "Purpose", "relations": ["purpose"], "hint": "why it matters, what need it serves" },
+    { "id": "mechanism", "label": "Mechanisms", "relations": ["mechanism"], "hint": "the ways it can be done" },
+    { "id": "taxonomy", "label": "Place in the map", "relations": ["part_of", "in:part_of"], "hint": "broader and narrower concepts" },
+    { "id": "realizations", "label": "Realizations", "relations": ["in:provides", "in:implements"], "hint": "tools that provide it" },
+    { "id": "constraints", "label": "Constraints", "relations": ["constraint"], "hint": "what limits valid solutions" },
+    { "id": "failures", "label": "Failure modes", "relations": ["failure_mode"], "hint": "how it goes wrong" },
+    { "id": "applies", "label": "When it applies", "relations": ["applies_when", "in:needs"], "hint": "which situations or projects need it" },
+    { "id": "questions", "label": "Open questions", "relations": ["question"], "hint": "what we know we do not know" }
+  ]
+}

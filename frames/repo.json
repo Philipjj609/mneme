@@ -1,0 +1,17 @@
+{
+  "kind": "repo",
+  "label": "Tool / repository",
+  "slots": [
+    { "id": "purpose", "label": "Purpose", "relations": ["described_as", "purpose"], "hint": "what it is for, in its own words and ours" },
+    { "id": "capability", "label": "Capability", "relations": ["provides", "implements"], "hint": "which capabilities it realizes" },
+    { "id": "mechanism", "label": "Mechanism", "relations": ["mechanism"], "hint": "how it actually works inside" },
+    { "id": "stack", "label": "Stack", "relations": ["language", "uses"], "hint": "language, runtime, dependencies" },
+    { "id": "alternatives", "label": "Alternatives", "relations": ["alternative_to", "in:alternative_to"], "hint": "what else does the same job" },
+    { "id": "complements", "label": "Works with", "relations": ["complements", "in:complements", "builds_on"], "hint": "what it pairs with" },
+    { "id": "fit", "label": "Fit for our projects", "relations": ["relevant_to", "used_in"], "hint": "where it could serve Koda, Kalyth, mneme, websites…" },
+    { "id": "limits", "label": "Limits & failure modes", "relations": ["limitation", "failure_mode"], "hint": "where it breaks, what to watch for" },
+    { "id": "adoption", "label": "Adoption", "relations": ["stars"], "hint": "how widely used, over time" },
+    { "id": "provenance", "label": "Provenance & license", "relations": ["owned_by", "license"], "hint": "who makes it, under what terms" },
+    { "id": "verdict", "label": "Our verdict", "relations": ["verdict", "tried"], "hint": "have we actually used it, and how did it go" }
+  ]
+}

@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mneme explorer</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1f23; --muted: #6b6f78; --line: #e3e1db; --soft: #efede8;
+  --accent: #3b5bdb; --fresh: #e8590c;
+  --k-repo: #4c6ef5; --k-concept: #c2255c; --k-project: #2b8a3e; --k-topic: #868e96; --k-owner: #adb5bd; --k-person: #e67700; --k-other: #495057;
+  --f-capability: #4c6ef5; --f-taxonomy: #c2255c; --f-peer: #7048e8; --f-lineage: #0c8599; --f-use: #2b8a3e;
+  --f-meaning: #e67700; --f-bounds: #e03131; --f-topic: #adb5bd; --f-meta: #ced4da; --f-personal: #f59f00; --f-other: #868e96;
+  --b-observed: #2b8a3e; --b-stated: #1971c2; --b-inferred: #9c36b5; --b-imported: #0c8599; --b-intuited: #e67700;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161a; --panel: #1b1e23; --ink: #e9ecef; --muted: #9aa0a8; --line: #2c3036; --soft: #23272d;
+    --accent: #748ffc; --fresh: #ff922b;
+    --k-repo: #748ffc; --k-concept: #f06595; --k-project: #51cf66; --k-topic: #868e96; --k-owner: #5c636a; --k-person: #ffa94d; --k-other: #adb5bd;
+    --f-capability: #748ffc; --f-taxonomy: #f06595; --f-peer: #9775fa; --f-lineage: #3bc9db; --f-use: #51cf66;
+    --f-meaning: #ffa94d; --f-bounds: #ff6b6b; --f-topic: #5c636a; --f-meta: #495057; --f-personal: #fcc419; --f-other: #868e96;
+    --b-observed: #51cf66; --b-stated: #4dabf7; --b-inferred: #da77f2; --b-imported: #3bc9db; --b-intuited: #ffa94d;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --panel: #1b1e23; --ink: #e9ecef; --muted: #9aa0a8; --line: #2c3036; --soft: #23272d;
+  --accent: #748ffc; --fresh: #ff922b;
+  --k-repo: #748ffc; --k-concept: #f06595; --k-project: #51cf66; --k-topic: #868e96; --k-owner: #5c636a; --k-person: #ffa94d; --k-other: #adb5bd;
+  --f-capability: #748ffc; --f-taxonomy: #f06595; --f-peer: #9775fa; --f-lineage: #3bc9db; --f-use: #51cf66;
+  --f-meaning: #ffa94d; --f-bounds: #ff6b6b; --f-topic: #5c636a; --f-meta: #495057; --f-personal: #fcc419; --f-other: #868e96;
+  --b-observed: #51cf66; --b-stated: #4dabf7; --b-inferred: #da77f2; --b-imported: #3bc9db; --b-intuited: #ffa94d;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; display: grid; grid-template-rows: auto 1fr auto; }
+a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+button { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.brand { font-weight: 700; letter-spacing: .02em; }
+.brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.tabs { display: flex; gap: 6px; }
+.search { margin-left: auto; position: relative; }
+.search input { width: 260px; max-width: 60vw; padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
+.results { position: absolute; right: 0; top: 36px; width: 340px; max-height: 360px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 8px 30px rgba(0,0,0,.18); z-index: 20; display: none; }
+.results div { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid var(--soft); }
+.results div:hover { background: var(--soft); }
+main { display: grid; grid-template-columns: 210px 1fr 380px; min-height: 0; }
+aside { background: var(--panel); overflow: auto; min-height: 0; }
+#filters { border-right: 1px solid var(--line); padding: 12px; }
+#detail { border-left: 1px solid var(--line); padding: 14px 16px; }
+#stage { position: relative; min-height: 0; overflow: hidden; }
+.view { position: absolute; inset: 0; overflow: auto; display: none; }
+.view.active { display: block; }
+#cy { position: absolute; inset: 0; }
+h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 0 6px; }
+h3:first-child { margin-top: 0; }
+label.chk { display: flex; align-items: center; gap: 7px; padding: 2px 0; cursor: pointer; user-select: none; }
+.sw { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.sw.line { border-radius: 2px; height: 4px; width: 16px; }
+.count { color: var(--muted); margin-left: auto; font-size: 12px; }
+footer { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-top: 1px solid var(--line); background: var(--panel); }
+footer input[type=range] { flex: 1; accent-color: var(--accent); }
+#tlabel { min-width: 0; max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+#tlabel b { color: var(--ink); }
+.badge { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid currentColor; line-height: 17px; margin-left: 4px; white-space: nowrap; }
+.kind { color: #fff; border: none; }
+.dname { font-size: 18px; font-weight: 700; margin: 0 0 2px; word-break: break-word; }
+.dmeta { color: var(--muted); font-size: 12px; margin-bottom: 10px; word-break: break-all; }
+.summary { background: var(--soft); border-radius: 8px; padding: 8px 10px; margin: 8px 0 12px; }
+.slot { margin: 10px 0; }
+.slot .sl { font-weight: 600; font-size: 13px; }
+.claim { padding: 3px 0 3px 10px; border-left: 2px solid var(--line); margin: 3px 0; font-size: 13px; word-break: break-word; }
+.claim .why { color: var(--muted); font-size: 12px; }
+.claim.old { opacity: .55; text-decoration: line-through; }
+.frontier { color: var(--muted); }
+.frontier li { margin: 2px 0; }
+.bar { height: 6px; background: var(--soft); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.empty { color: var(--muted); padding: 30px; text-align: center; }
+/* clusters */
+.clusters { padding: 16px; display: grid; gap: 18px; }
+.group h2 { font-size: 15px; margin: 0 0 8px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.card .ct { font-weight: 600; cursor: pointer; color: var(--k-concept); }
+.card .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chip { font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--soft); cursor: pointer; }
+.chip:hover { outline: 1px solid var(--accent); }
+.chip.fresh, .fresh-row { outline: 2px solid var(--fresh); }
+/* comprehension */
+.comp { padding: 16px; }
+.comp table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 18px; }
+.comp th, .comp td { padding: 5px 8px; border-bottom: 1px solid var(--soft); text-align: left; font-size: 12px; }
+.comp th.rot { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; font-weight: 500; color: var(--muted); height: 120px; vertical-align: bottom; }
+.comp td.n { cursor: pointer; font-weight: 600; font-size: 13px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 1.5px solid var(--muted); }
+.dot.f { border: none; }
+.stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 140px; }
+.stat b { display: block; font-size: 22px; }
+.stat span { color: var(--muted); font-size: 12px; }
+/* history */
+.hist { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.commit { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+.commit.cur { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+.commit .cm { font-weight: 600; }
+.commit .cx { color: var(--muted); font-size: 12px; }
+.changes .claim { font-size: 12px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto; }
+  #filters { border-right: none; border-bottom: 1px solid var(--line); max-height: 160px; }
+  #detail { border-left: none; border-top: 1px solid var(--line); }
+  .hist { grid-template-columns: 1fr; }
+  .search input { width: 160px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">mneme<small id="hinfo"></small></div>
+  <nav class="tabs" id="tabs">
+    <button data-v="graph" class="on">Graph</button>
+    <button data-v="clusters">Clusters</button>
+    <button data-v="comp">Comprehension</button>
+    <button data-v="hist">History</button>
+  </nav>
+  <div class="search"><input id="q" placeholder="Search anchors…" autocomplete="off"><div class="results" id="res"></div></div>
+  <button id="theme" title="Toggle theme">◐</button>
+</header>
+<main>
+  <aside id="filters"></aside>
+  <section id="stage">
+    <div class="view active" id="v-graph"><div id="cy"></div></div>
+    <div class="view" id="v-clusters"></div>
+    <div class="view" id="v-comp"></div>
+    <div class="view" id="v-hist"></div>
+  </section>
+  <aside id="detail"><div class="empty">Select something to see what the memory knows about it — slot by slot, with evidence, and what it does not yet know.</div></aside>
+</main>
+<footer>
+  <button id="prev" title="Previous commit">◀</button>
+  <input type="range" id="t" min="0" max="0" value="0" aria-label="Commit">
+  <button id="next" title="Next commit">▶</button>
+  <button id="latest">Latest</button>
+  <div id="tlabel"></div>
+</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<script>
+window.MNEME = /*MNEME_DATA*/null;
+</script>
+<script>
+(function () {
+'use strict';
+const D = window.MNEME;
+if (!D) { document.body.innerHTML = '<p class="empty">No data. Run <code>mneme build</code>.</p>'; return; }
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const A = new Map(D.anchors.map(a => [a.id, a]));
+const S = new Map(D.sources.map(s => [s.id, s]));
+const FR = new Map(D.frames.map(f => [f.kind, f]));
+const N = D.commits.length;
+let T = N - 1, view = 'graph', selected = null;
+const KINDS = [...new Set(D.anchors.map(a => a.kind))].sort();
+const FAMS = [...new Set(D.claims.map(c => c.family))].sort((a, b) => D.meta.families.indexOf(a) - D.meta.families.indexOf(b));
+const BASES = ['observed', 'stated', 'inferred', 'imported', 'intuited'].filter(b => D.claims.some(c => c.basis === b));
+const show = {
+  kinds: new Set(KINDS.filter(k => !['topic', 'owner', 'person'].includes(k))),
+  fams: new Set(FAMS.filter(f => !['meta', 'topic', 'personal'].includes(f))),
+  bases: new Set(BASES),
+};
+const kindColor = k => css('--k-' + k) || css('--k-other');
+const famColor = f => css('--f-' + f) || css('--f-other');
+const basisColor = b => css('--b-' + b);
+const nameOf = id => (A.get(id) || {}).name || id;
+const shortName = a => a.kind === 'repo' ? a.name.split('/').pop() : a.name;
+
+// ---- time-indexed state ----
+const statusAt = (c, t) => c.introduced > t ? null : (c.changed != null && c.changed <= t ? c.status : 'active');
+let cur = null;
+function computeState() {
+  const active = [], byAbout = new Map(), byTarget = new Map(), history = new Map();
+  for (const c of D.claims) {
+    const st = statusAt(c, T);
+    if (st == null) continue;
+    if (!history.has(c.about)) history.set(c.about, []);
+    history.get(c.about).push({ c, st });
+    if (st !== 'active') continue;
+    active.push(c);
+    (byAbout.get(c.about) || byAbout.set(c.about, []).get(c.about)).push(c);
+    if (c.vk === 'anchor') (byTarget.get(c.v) || byTarget.set(c.v, []).get(c.v)).push(c);
+  }
+  const alive = new Set(D.anchors.filter(a => a.introduced <= T).map(a => a.id));
+  cur = { active, byAbout, byTarget, history, alive };
+}
+function profile(id) {
+  const a = A.get(id); const f = a && FR.get(a.kind); if (!f) return null;
+  const out = (cur.byAbout.get(id) || []), inn = (cur.byTarget.get(id) || []);
+  return f.slots.map(s => ({ slot: s, claims: s.relations.flatMap(r => r.startsWith('in:') ? inn.filter(c => c.relation === r.slice(3)) : out.filter(c => c.relation === r)) }));
+}
+const coverage = p => p && p.length ? p.filter(x => x.claims.length).length / p.length : 0;
+const BRANK = { observed: 0, stated: 1, imported: 2, inferred: 3, intuited: 4 };
+const bestBasis = cs => cs.slice().sort((a, b) => BRANK[a.basis] - BRANK[b.basis])[0].basis;
+
+// ---- filters panel ----
+function renderFilters() {
+  const kc = k => D.anchors.filter(a => a.kind === k && cur.alive.has(a.id)).length;
+  const fc = f => cur.active.filter(c => c.family === f).length;
+  const box = (set, key, label, swatch, count) => `<label class="chk"><input type="checkbox" data-set="${set}" data-key="${esc(key)}" ${show[set].has(key) ? 'checked' : ''}>${swatch}${esc(label)}<span class="count">${count}</span></label>`;
+  document.getElementById('filters').innerHTML =
+    '<h3>Things (anchors)</h3>' + KINDS.map(k => box('kinds', k, k, `<span class="sw" style="background:${kindColor(k)}"></span>`, kc(k))).join('') +
+    '<h3>Links (edge layers)</h3>' + FAMS.map(f => box('fams', f, f, `<span class="sw line" style="background:${famColor(f)}"></span>`, fc(f))).join('') +
+    '<h3>Basis</h3>' + BASES.map(b => box('bases', b, b, `<span class="sw" style="background:${basisColor(b)}"></span>`, cur.active.filter(c => c.basis === b).length)).join('') +
+    '<h3>Reading the graph</h3><div class="dmeta">Solid edge = observed / stated. Dashed = inferred. Orange ring = added in the selected commit. Drag the slider to travel through the memory\'s history.</div>';
+}
+document.getElementById('filters').addEventListener('change', e => {
+  const i = e.target; if (!i.dataset.set) return;
+  i.checked ? show[i.dataset.set].add(i.dataset.key) : show[i.dataset.set].delete(i.dataset.key);
+  if (i.dataset.set === 'kinds') { applyVisibility(); relayout(); } else applyVisibility();
+  renderView();
+});
+
+// ---- graph view ----
+let cy = null;
+function initGraph() {
+  if (typeof cytoscape === 'undefined') {
+    document.getElementById('cy').innerHTML = '<div class="empty">Graph library could not load (offline?). The other views still work.</div>';
+    return;
+  }
+  const deg = new Map();
+  for (const c of D.claims) if (c.vk === 'anchor' && c.status === 'active' && !['meta', 'topic', 'personal'].includes(c.family)) {
+    deg.set(c.about, (deg.get(c.about) || 0) + 1); deg.set(c.v, (deg.get(c.v) || 0) + 1);
+  }
+  const els = [];
+  for (const a of D.anchors) els.push({ group: 'nodes', data: { id: a.id, label: shortName(a), kind: a.kind, color: kindColor(a.kind), size: 14 + Math.min(46, Math.sqrt(deg.get(a.id) || 0) * 7) } });
+  for (const c of D.claims) if (c.vk === 'anchor' && A.has(c.about) && A.has(c.v))
+    els.push({ group: 'edges', data: { id: c.id, source: c.about, target: c.v, color: famColor(c.family), w: 0.8 + 2 * (c.confidence ?? 0.9) }, classes: c.basis === 'inferred' || c.basis === 'intuited' ? 'inf' : '' });
+  cy = cytoscape({
+    container: document.getElementById('cy'), elements: els, minZoom: 0.08, maxZoom: 3, wheelSensitivity: 0.25,
+    style: [
+      { selector: 'node', style: { 'background-color': 'data(color)', width: 'data(size)', height: 'data(size)', label: 'data(label)', 'font-size': 10, color: css('--ink'), 'text-valign': 'bottom', 'text-margin-y': 3, 'text-outline-width': 2, 'text-outline-color': css('--bg'), 'min-zoomed-font-size': 7 } },
+      { selector: 'node[kind="concept"]', style: { shape: 'round-diamond', 'font-weight': 700, 'font-size': 13, 'min-zoomed-font-size': 4 } },
+      { selector: 'node[kind="project"]', style: { shape: 'round-rectangle', 'font-weight': 700, 'font-size': 16, 'min-zoomed-font-size': 3 } },
+      { selector: 'edge', style: { width: 'data(w)', 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.6, 'curve-style': 'bezier', opacity: 0.45 } },
+      { selector: 'edge.inf', style: { 'line-style': 'dashed', 'line-dash-pattern': [5, 4] } },
+      { selector: '.hidden', style: { display: 'none' } },
+      { selector: '.fresh', style: { 'border-width': 3, 'border-color': css('--fresh') } },
+      { selector: 'edge.fresh', style: { opacity: 0.95, width: 3 } },
+      { selector: '.faded', style: { opacity: 0.08 } },
+      { selector: 'node.sel', style: { 'border-width': 4, 'border-color': css('--accent'), 'font-size': 16, 'min-zoomed-font-size': 0 } },
+      { selector: 'node.nb', style: { 'font-size': 14, 'min-zoomed-font-size': 0 } },
+      { selector: 'edge.hl', style: { opacity: 0.95 } },
+    ],
+  });
+  cy.on('tap', 'node', e => select(e.target.id()));
+  cy.on('tap', e => { if (e.target === cy) select(null); });
+  applyVisibility(); relayout();
+}
+function applyVisibility() {
+  if (!cy) return;
+  const aliveEdge = new Set(cur.active.map(c => c.id));
+  const meta = new Map(D.claims.map(c => [c.id, c]));
+  cy.batch(() => {
+    cy.nodes().forEach(n => {
+      const a = A.get(n.id());
+      n.toggleClass('hidden', !(cur.alive.has(a.id) && show.kinds.has(a.kind)));
+      n.toggleClass('fresh', a.introduced === T && T > 0);
+    });
+    cy.edges().forEach(e => {
+      const c = meta.get(e.id());
+      const vis = aliveEdge.has(c.id) && show.fams.has(c.family) && show.bases.has(c.basis) && !e.source().hasClass('hidden') && !e.target().hasClass('hidden');
+      e.toggleClass('hidden', !vis);
+      e.toggleClass('fresh', c.introduced === T && T > 0);
+    });
+  });
+  highlight();
+}
+function relayout() {
+  if (!cy) return;
+  cy.elements().not('.hidden').layout({ name: 'cose', animate: false, randomize: true, nodeRepulsion: () => 9000, idealEdgeLength: () => 70, edgeElasticity: () => 80, gravity: 0.3, numIter: 1200, nodeOverlap: 12, componentSpacing: 50, padding: 30 }).run();
+  cy.fit(cy.elements().not('.hidden'), 30);
+}
+function highlight() {
+  if (!cy) return;
+  cy.elements().removeClass('faded sel hl nb');
+  if (!selected || !cy.getElementById(selected).length) return;
+  const n = cy.getElementById(selected);
+  const hood = n.closedNeighborhood().not('.hidden');
+  cy.elements().not('.hidden').not(hood).addClass('faded');
+  hood.nodes().addClass('nb');
+  n.addClass('sel'); n.connectedEdges().addClass('hl');
+}
+
+// ---- clusters view ----
+function renderClusters() {
+  const el = document.getElementById('v-clusters');
+  const parentOf = new Map(), kids = new Map();
+  for (const c of cur.active) if (c.relation === 'part_of' && c.vk === 'anchor') { parentOf.set(c.about, c.v); (kids.get(c.v) || kids.set(c.v, []).get(c.v)).push(c.about); }
+  const concepts = D.anchors.filter(a => a.kind === 'concept' && cur.alive.has(a.id));
+  const providers = id => (cur.byTarget.get(id) || []).filter(c => c.relation === 'provides').map(c => c.about);
+  const chip = id => { const a = A.get(id); const fresh = (cur.byTarget.get(id) || []).length && a.introduced === T && T > 0; return `<span class="chip${fresh ? ' fresh' : ''}" data-id="${esc(id)}" title="${esc(a.summary || '')}">${esc(shortName(a))}</span>`; };
+  const card = id => { const p = providers(id); const a = A.get(id); return `<div class="card"><div class="ct" data-id="${esc(id)}">${esc(a.name)}</div><div class="dmeta">${p.length} provider${p.length === 1 ? '' : 's'}</div><div class="chips">${p.map(chip).join('')}</div></div>`; };
+  const roots = concepts.filter(a => !parentOf.has(a.id) && (kids.get(a.id) || []).length);
+  const loose = concepts.filter(a => !parentOf.has(a.id) && !(kids.get(a.id) || []).length);
+  let html = '<div class="clusters">';
+  for (const r of roots) html += `<div class="group"><h2>${esc(r.name)}</h2><div class="cards">${(kids.get(r.id) || []).filter(id => cur.alive.has(id)).map(card).join('')}${providers(r.id).length ? card(r.id) : ''}</div></div>`;
+  if (loose.length) html += `<div class="group"><h2>Other concepts</h2><div class="cards">${loose.map(a => card(a.id)).join('')}</div></div>`;
+  const repos = D.anchors.filter(a => a.kind === 'repo' && cur.alive.has(a.id));
+  const unsorted = repos.filter(a => !(cur.byAbout.get(a.id) || []).some(c => c.relation === 'provides'));
+  if (unsorted.length) html += `<div class="group"><h2>Not yet understood — no capability known</h2><div class="cards"><div class="card"><div class="chips">${unsorted.map(a => chip(a.id)).join('')}</div></div></div></div>`;
+  const projects = D.anchors.filter(a => a.kind === 'project' && cur.alive.has(a.id));
+  if (projects.length) html += `<div class="group"><h2>Your projects — what could serve them</h2><div class="cards">${projects.map(p => { const rel = (cur.byTarget.get(p.id) || []).filter(c => ['relevant_to', 'used_in', 'builds_on'].includes(c.relation)).map(c => c.about); return `<div class="card"><div class="ct" data-id="${esc(p.id)}" style="color:${kindColor('project')}">${esc(p.name)}</div><div class="dmeta">${rel.length} linked</div><div class="chips">${[...new Set(rel)].map(chip).join('')}</div></div>`; }).join('')}</div></div>`;
+  el.innerHTML = html + '</div>';
+}
+
+// ---- comprehension view ----
+function renderComp() {
+  const el = document.getElementById('v-comp');
+  let html = '<div class="comp">';
+  let empty = 0, total = 0; const missing = new Map();
+  const tables = [];
+  for (const [kind, f] of FR) {
+    const rows = D.anchors.filter(a => a.kind === kind && cur.alive.has(a.id)).map(a => ({ a, p: profile(a.id) }));
+    if (!rows.length) continue;
+    for (const r of rows) for (const s of r.p) { total++; if (!s.claims.length) { empty++; missing.set(s.slot.label, (missing.get(s.slot.label) || 0) + 1); } }
+    rows.sort((x, y) => coverage(x.p) - coverage(y.p) || x.a.name.localeCompare(y.a.name));
+    tables.push(`<h3>${esc(f.label)} · ${rows.length}</h3><table><thead><tr><th>Name</th><th style="width:110px">Understood</th>${f.slots.map(s => `<th class="rot" title="${esc(s.hint || '')}">${esc(s.label)}</th>`).join('')}</tr></thead><tbody>` +
+      rows.map(({ a, p }) => `<tr><td class="n" data-id="${esc(a.id)}" title="${esc(a.name)}">${esc(shortName(a))}</td><td><div class="bar"><i style="width:${Math.round(coverage(p) * 100)}%"></i></div></td>${p.map(s => s.claims.length ? `<td title="${esc(s.slot.label)}: ${s.claims.length} claim(s), best basis ${bestBasis(s.claims)}"><span class="dot f" style="background:${basisColor(bestBasis(s.claims))}"></span></td>` : `<td title="${esc(s.slot.label)}: unknown"><span class="dot"></span></td>`).join('')}</tr>`).join('') + '</tbody></table>');
+  }
+  const top = [...missing].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([l, n]) => `${esc(l)} (${n})`).join(', ');
+  html += `<div class="stats"><div class="stat"><b>${total ? Math.round((1 - empty / total) * 100) : 0}%</b><span>of frame slots filled</span></div><div class="stat"><b>${empty}</b><span>named unknowns (frontier)</span></div><div class="stat" style="flex:1;min-width:240px"><b style="font-size:14px">${top || '—'}</b><span>most common gaps → the research agenda</span></div></div>`;
+  html += '<div class="dmeta">Filled dot = known, coloured by its strongest basis (green observed · blue stated · purple inferred). Hollow = not yet understood. Rows with the least understanding come first.</div>';
+  el.innerHTML = html + tables.join('') + '</div>';
+}
+
+// ---- history view ----
+function renderHist() {
+  const el = document.getElementById('v-hist');
+  const list = D.commits.slice().reverse().map(c => `<div class="commit${c.idx === T ? ' cur' : ''}" data-t="${c.idx}"><div class="cm">${c.idx}. ${esc(c.message)}</div><div class="cx">${esc(c.time.replace('T', ' ').slice(0, 16))} · ${esc(c.author)} · <span class="mono">${esc(c.id)}</span></div><div class="cx">+${c.added.anchors} anchors · +${c.added.claims} claims · +${c.added.sources} sources${c.added.status ? ` · ${c.added.status} status changes` : ''}</div></div>`).join('');
+  const added = D.claims.filter(c => c.introduced === T), changed = D.claims.filter(c => c.changed === T), newA = D.anchors.filter(a => a.introduced === T);
+  const line = (c, pre) => `<div class="claim">${pre} <a href="#" data-id="${esc(c.about)}">${esc(nameOf(c.about))}</a> <span class="mono">${esc(c.relation)}</span> ${c.vk === 'anchor' ? `<a href="#" data-id="${esc(c.v)}">${esc(nameOf(c.v))}</a>` : esc(String(c.v).slice(0, 90))} <span class="badge" style="color:${basisColor(c.basis)}">${c.basis}</span></div>`;
+  const cm = D.commits[T];
+  const branches = Object.entries(D.meta.branches || {}).map(([b, id]) => `<span class="badge">${b === D.meta.branch ? '● ' : ''}${esc(b)} ${esc(id.slice(0, 10))}</span>`).join(' ');
+  el.innerHTML = `<div class="hist"><div><h3>Commits on ${esc(D.meta.branch)} (newest first)</h3><div class="dmeta">Branches: ${branches}</div>${list}</div><div class="changes"><h3>What commit ${T} changed</h3><div class="dmeta">${esc(cm ? cm.message : '')}</div>${newA.length ? `<h3>New anchors (${newA.length})</h3><div class="chips" style="display:flex;flex-wrap:wrap;gap:4px">${newA.slice(0, 120).map(a => `<span class="chip" data-id="${esc(a.id)}">${esc(shortName(a))}</span>`).join('')}</div>` : ''}${changed.length ? `<h3>Status changes (${changed.length})</h3>${changed.slice(0, 60).map(c => line(c, '~ ' + c.status)).join('')}` : ''}<h3>New claims (${added.length})</h3>${added.slice(0, 150).map(c => line(c, '+')).join('')}${added.length > 150 ? `<div class="dmeta">…and ${added.length - 150} more</div>` : ''}</div></div>`;
+}
+
+// ---- detail panel ----
+function claimHtml(c, incoming, old) {
+  const other = incoming ? c.about : (c.vk === 'anchor' ? c.v : null);
+  const val = other ? `<a href="#" data-id="${esc(other)}">${esc(nameOf(other))}</a>` : esc(c.vk === 'number' ? Number(c.v).toLocaleString() : c.v);
+  const bits = [`<span class="badge" style="color:${basisColor(c.basis)}">${c.basis}</span>`];
+  if (c.stance !== 'is') bits.push(`<span class="badge">${esc(c.stance)}</span>`);
+  if (c.confidence != null) bits.push(`<span class="badge">conf ${c.confidence.toFixed(2)}</span>`);
+  if (c.valid_from) bits.push(`<span class="badge">since ${esc(c.valid_from.slice(0, 10))}</span>`);
+  if (c.reinforced) bits.push(`<span class="badge">×${c.reinforced + 1}</span>`);
+  if (old) bits.push(`<span class="badge">${esc(old)}</span>`);
+  return `<div class="claim${old ? ' old' : ''}">${incoming ? '← ' : ''}${val} ${bits.join('')}${c.rationale ? `<div class="why">${esc(c.rationale)}</div>` : ''}</div>`;
+}
+function renderDetail() {
+  const el = document.getElementById('detail');
+  const a = selected && A.get(selected);
+  if (!a) { el.innerHTML = '<div class="empty">Select something to see what the memory knows about it — slot by slot, with evidence, and what it does not yet know.</div>'; return; }
+  if (!cur.alive.has(a.id)) { el.innerHTML = `<div class="dname">${esc(a.name)}</div><div class="empty">Not known yet at commit ${T}. It enters the memory at commit ${a.introduced}.</div>`; return; }
+  const p = profile(a.id); const used = new Set();
+  let h = `<div class="dname">${esc(a.name)}</div><div class="dmeta"><span class="badge kind" style="background:${kindColor(a.kind)}">${esc(a.kind)}</span> <span class="badge">${esc(a.scope)}</span> <span class="mono">${esc(a.id)}</span><br>known since commit ${a.introduced}: ${esc(D.commits[a.introduced].message)}</div>`;
+  if (a.summary) h += `<div class="summary">${esc(a.summary)}</div>`;
+  if (p) {
+    const cv = coverage(p);
+    h += `<h3>Understanding · ${Math.round(cv * 100)}% of the ${esc(FR.get(a.kind).label)} frame</h3><div class="bar"><i style="width:${Math.round(cv * 100)}%"></i></div>`;
+    for (const s of p) if (s.claims.length) { s.claims.forEach(c => used.add(c.id)); h += `<div class="slot"><div class="sl">${esc(s.slot.label)}</div>${s.claims.map(c => claimHtml(c, c.about !== a.id)).join('')}</div>`; }
+    const fr = p.filter(s => !s.claims.length);
+    if (fr.length) h += `<h3>Frontier — not yet understood</h3><ul class="frontier">${fr.map(s => `<li><b>${esc(s.slot.label)}</b>${s.slot.hint ? ' — ' + esc(s.slot.hint) : ''}</li>`).join('')}</ul>`;
+  }
+  const other = (cur.byAbout.get(a.id) || []).filter(c => !used.has(c.id));
+  if (other.length) h += `<h3>Other claims</h3>${other.map(c => `<div class="slot"><div class="sl mono">${esc(c.relation)}</div>${claimHtml(c, false)}</div>`).join('')}`;
+  const inc = (cur.byTarget.get(a.id) || []).filter(c => !used.has(c.id));
+  if (inc.length) {
+    const g = new Map(); inc.forEach(c => (g.get(c.relation) || g.set(c.relation, []).get(c.relation)).push(c));
+    h += `<h3>Linked from (${inc.length})</h3>` + [...g].map(([r, cs]) => `<div class="slot"><div class="sl mono">${esc(r)} (${cs.length})</div>${cs.slice(0, 40).map(c => claimHtml(c, true)).join('')}${cs.length > 40 ? `<div class="dmeta">…${cs.length - 40} more</div>` : ''}</div>`).join('');
+  }
+  const past = (cur.history.get(a.id) || []).filter(x => x.st !== 'active');
+  if (past.length) h += `<h3>History — no longer current</h3>${past.map(x => claimHtml(x.c, false, x.st)).join('')}`;
+  const srcs = [...new Set((cur.byAbout.get(a.id) || []).flatMap(c => c.evidence))].map(id => S.get(id)).filter(Boolean);
+  if (srcs.length) h += `<h3>Evidence</h3>${srcs.map(s => `<div class="claim"><span class="badge">${esc(s.kind)}</span> ${/^https?:/.test(s.uri) ? `<a href="${esc(s.uri)}" target="_blank" rel="noopener">${esc(s.title)}</a>` : esc(s.title)} <span class="dmeta">${esc(s.captured_at.slice(0, 10))} · ${esc(s.id)}</span></div>`).join('')}`;
+  el.innerHTML = h;
+}
+
+// ---- selection, views, time ----
+function select(id) { selected = id; highlight(); renderDetail(); if (id && cy && view === 'graph') { const n = cy.getElementById(id); if (n.length && !n.hasClass('hidden')) cy.animate({ center: { eles: n }, duration: 250 }); } }
+function renderView() { if (view === 'clusters') renderClusters(); else if (view === 'comp') renderComp(); else if (view === 'hist') renderHist(); }
+function setView(v) {
+  view = v;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  document.querySelectorAll('.view').forEach(x => x.classList.toggle('active', x.id === 'v-' + v));
+  document.getElementById('filters').style.display = v === 'graph' ? '' : 'none';
+  document.querySelector('main').style.gridTemplateColumns = v === 'graph' ? '' : (innerWidth > 900 ? '1fr 380px' : '');
+  if (v === 'graph' && cy) { cy.resize(); }
+  renderView();
+}
+function setT(t) {
+  T = Math.max(0, Math.min(N - 1, t));
+  document.getElementById('t').value = T;
+  const c = D.commits[T];
+  document.getElementById('tlabel').innerHTML = c ? `<b>commit ${T}/${N - 1}</b> · ${esc(c.message)} · ${esc(c.time.slice(0, 10))}` : 'empty memory';
+  computeState(); renderFilters(); applyVisibility(); renderView(); renderDetail();
+}
+document.getElementById('tabs').addEventListener('click', e => { if (e.target.dataset.v) setView(e.target.dataset.v); });
+document.getElementById('t').addEventListener('input', e => setT(+e.target.value));
+document.getElementById('prev').onclick = () => setT(T - 1);
+document.getElementById('next').onclick = () => setT(T + 1);
+document.getElementById('latest').onclick = () => setT(N - 1);
+document.getElementById('stage').addEventListener('click', e => {
+  const t = e.target.closest('[data-t]'); if (t) { setT(+t.dataset.t); return; }
+  const d = e.target.closest('[data-id]'); if (d) { e.preventDefault(); select(d.dataset.id); }
+});
+document.getElementById('detail').addEventListener('click', e => { const d = e.target.closest('[data-id]'); if (d) { e.preventDefault(); select(d.dataset.id); } });
+const q = document.getElementById('q'), res = document.getElementById('res');
+q.addEventListener('input', () => {
+  const s = q.value.trim().toLowerCase(); if (!s) { res.style.display = 'none'; return; }
+  const hits = D.anchors.filter(a => (a.name + ' ' + a.id + ' ' + (a.summary || '')).toLowerCase().includes(s)).slice(0, 30);
+  res.innerHTML = hits.map(a => `<div data-id="${esc(a.id)}"><span class="badge kind" style="background:${kindColor(a.kind)}">${esc(a.kind)}</span> ${esc(a.name)}</div>`).join('') || '<div>No match</div>';
+  res.style.display = 'block';
+});
+res.addEventListener('click', e => { const d = e.target.closest('[data-id]'); if (!d) return; res.style.display = 'none'; q.value = ''; const a = A.get(d.dataset.id); if (!show.kinds.has(a.kind)) { show.kinds.add(a.kind); applyVisibility(); relayout(); renderFilters(); } select(a.id); });
+document.addEventListener('click', e => { if (!e.target.closest('.search')) res.style.display = 'none'; });
+document.getElementById('theme').onclick = () => {
+  const r = document.documentElement; const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const now = r.dataset.theme || (dark ? 'dark' : 'light'); r.dataset.theme = now === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('mneme-theme', r.dataset.theme); } catch (_) {}
+  location.reload();
+};
+try { const th = localStorage.getItem('mneme-theme'); if (th) document.documentElement.dataset.theme = th; } catch (_) {}
+
+document.getElementById('hinfo').textContent = ` · ${D.meta.branch} · ${N} commits · ${D.anchors.length} anchors · ${D.claims.length} claims`;
+document.getElementById('t').max = Math.max(0, N - 1);
+computeState(); renderFilters(); initGraph(); setT(N - 1);
+})();
+</script>
+</body>
+</html>

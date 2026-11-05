@@ -1,0 +1,16 @@
+[package]
+name = "mneme-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mneme"
+path = "src/main.rs"
+
+[dependencies]
+mneme-core = { path = "../mneme-core" }
+anyhow.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+ureq = "2"
