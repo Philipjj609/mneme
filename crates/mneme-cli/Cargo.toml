@@ -1,5 +1,6 @@
 [package]
 name = "mneme-cli"
+description = "The mneme command: capture, digest, recall, history, views."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +11,14 @@ path = "src/main.rs"
 
 [dependencies]
 mneme-core = { path = "../mneme-core" }
+organon-protocol = { git = "https://github.com/Philipjj609/organon-protocol", tag = "v0.1.0" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
 ureq = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -1,19 +1,21 @@
-//! On-disk layout (all plain text, git-friendly):
+//! On-disk layout of a memory folder (plain text, git-friendly):
 //!
-//! memory/log.jsonl      one commit per line — the authoritative memory
-//! memory/refs.json      branches and HEAD
-//! memory/sources/<id>   raw captured payloads (immutable evidence)
+//! ```text
+//! memory/log.jsonl       one commit per line: the authoritative memory (append-only)
+//! memory/refs.json       branches and HEAD
+//! memory/sources/<id>.*  captured evidence (local; may hold third-party content)
+//! memory/episodes.jsonl  recall and feedback log
+//! frames/*.json          comprehension frames
+//! ```
 
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
-
-use crate::model::*;
+use crate::error::{Error, Result};
+use crate::model::{Commit, CommitId, Op, Refs};
 use crate::state::State;
-use crate::util::now_rfc3339;
 
 /// Frames written by `init`, embedded from the repo's `frames/` at build time.
 pub const DEFAULT_FRAMES: &[(&str, &str)] = &[
@@ -26,179 +28,280 @@ pub const DEFAULT_FRAMES: &[(&str, &str)] = &[
     ("site.json", include_str!("../../../frames/site.json")),
 ];
 
+/// A memory folder.
+#[derive(Debug, Clone)]
 pub struct Repo {
-    pub root: PathBuf,
+    root: PathBuf,
 }
 
 impl Repo {
-    pub fn init(root: &Path) -> Result<Repo> {
-        let repo = Repo { root: root.to_path_buf() };
-        fs::create_dir_all(repo.mem().join("sources"))?;
+    /// Create (or complete) a memory in `root`: `memory/`, empty log, refs, default frames.
+    ///
+    /// # Errors
+    /// I/O failures creating the folders and files.
+    pub fn init(root: &Path) -> Result<Self> {
+        let repo = Self {
+            root: root.to_path_buf(),
+        };
+        let sources = repo.memory_dir().join("sources");
+        fs::create_dir_all(&sources).map_err(Error::io(&sources))?;
         if !repo.refs_path().exists() {
             repo.save_refs(&Refs::default())?;
         }
         if !repo.log_path().exists() {
-            fs::write(repo.log_path(), "")?;
+            write(&repo.log_path(), b"")?;
         }
-        // A new memory starts with the default comprehension frames; edit them freely afterwards.
-        if !repo.frames_dir().exists() {
-            fs::create_dir_all(repo.frames_dir())?;
+        let frames = repo.frames_dir();
+        if !frames.exists() {
+            fs::create_dir_all(&frames).map_err(Error::io(&frames))?;
             for (name, body) in DEFAULT_FRAMES {
-                fs::write(repo.frames_dir().join(name), body)?;
+                write(&frames.join(name), body.as_bytes())?;
             }
         }
         Ok(repo)
     }
 
-    /// Find the repo by walking up from `start` until `memory/refs.json` exists.
-    pub fn discover(start: &Path) -> Result<Repo> {
-        let mut dir = Some(start);
-        while let Some(d) = dir {
-            if d.join("memory").join("refs.json").exists() {
-                return Ok(Repo { root: d.to_path_buf() });
-            }
-            dir = d.parent();
-        }
-        bail!("no mneme memory found from {} upward (run `mneme init`)", start.display())
+    /// Open the memory at or above `start` (the first folder containing `memory/refs.json`).
+    ///
+    /// # Errors
+    /// [`Error::NoMemory`] if none is found.
+    pub fn discover(start: &Path) -> Result<Self> {
+        start
+            .ancestors()
+            .find(|d| d.join("memory").join("refs.json").exists())
+            .map(|d| Self {
+                root: d.to_path_buf(),
+            })
+            .ok_or_else(|| Error::NoMemory(start.to_path_buf()))
     }
 
-    pub fn mem(&self) -> PathBuf {
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    #[must_use]
+    pub fn memory_dir(&self) -> PathBuf {
         self.root.join("memory")
     }
-    fn refs_path(&self) -> PathBuf {
-        self.mem().join("refs.json")
-    }
-    fn log_path(&self) -> PathBuf {
-        self.mem().join("log.jsonl")
-    }
+    #[must_use]
     pub fn frames_dir(&self) -> PathBuf {
         self.root.join("frames")
     }
-
-    pub fn refs(&self) -> Result<Refs> {
-        let text = fs::read_to_string(self.refs_path()).context("reading refs.json")?;
-        Ok(serde_json::from_str(text.trim_start_matches('\u{feff}'))?)
+    fn refs_path(&self) -> PathBuf {
+        self.memory_dir().join("refs.json")
+    }
+    fn log_path(&self) -> PathBuf {
+        self.memory_dir().join("log.jsonl")
     }
 
+    /// # Errors
+    /// Missing or malformed `refs.json`.
+    pub fn refs(&self) -> Result<Refs> {
+        let path = self.refs_path();
+        let text = read(&path)?;
+        serde_json::from_str(strip_bom(&text)).map_err(|source| Error::Json { path, source })
+    }
+
+    /// # Errors
+    /// I/O failure writing `refs.json`.
     pub fn save_refs(&self, refs: &Refs) -> Result<()> {
-        fs::write(self.refs_path(), serde_json::to_string_pretty(refs)? + "\n")?;
-        Ok(())
+        let path = self.refs_path();
+        let text = serde_json::to_string_pretty(refs).map_err(|source| Error::Json {
+            path: path.clone(),
+            source,
+        })?;
+        write(&path, format!("{text}\n").as_bytes())
     }
 
     /// Every commit on every branch, in the order written.
+    ///
+    /// # Errors
+    /// I/O failure or a malformed line (reported with its line number).
     pub fn commits(&self) -> Result<Vec<Commit>> {
-        let text = fs::read_to_string(self.log_path()).context("reading log.jsonl")?;
+        let path = self.log_path();
+        let text = read(&path)?;
         text.lines()
-            .map(|l| l.trim_start_matches('\u{feff}'))
-            .filter(|l| !l.trim().is_empty())
             .enumerate()
-            .map(|(i, l)| serde_json::from_str(l).with_context(|| format!("log.jsonl line {}", i + 1)))
+            .map(|(i, l)| (i, strip_bom(l)))
+            .filter(|(_, l)| !l.trim().is_empty())
+            .map(|(i, l)| {
+                serde_json::from_str(l).map_err(|source| Error::Parse {
+                    path: path.clone(),
+                    line: i + 1,
+                    source,
+                })
+            })
             .collect()
     }
 
-    pub fn head(&self) -> Result<Option<Id>> {
+    /// # Errors
+    /// See [`Repo::refs`].
+    pub fn head(&self) -> Result<Option<CommitId>> {
         let refs = self.refs()?;
         Ok(refs.branches.get(&refs.head).cloned())
     }
 
-    /// Resolve a branch name or a (prefix of a) commit id.
-    pub fn resolve(&self, spec: &str) -> Result<Id> {
+    /// Resolve `HEAD`, a branch name, or a unique prefix of a commit id.
+    ///
+    /// # Errors
+    /// Unknown or ambiguous revision, or an empty memory for `HEAD`.
+    pub fn resolve(&self, spec: &str) -> Result<CommitId> {
         let refs = self.refs()?;
         if let Some(id) = refs.branches.get(spec) {
             return Ok(id.clone());
         }
         if spec == "HEAD" {
-            return self.head()?.ok_or_else(|| anyhow!("HEAD has no commits yet"));
+            return refs.branches.get(&refs.head).cloned().ok_or(Error::Empty);
         }
-        let matches: Vec<Id> =
-            self.commits()?.into_iter().map(|c| c.id).filter(|id| id.starts_with(spec)).collect();
-        match matches.len() {
-            1 => Ok(matches[0].clone()),
-            0 => bail!("no branch or commit matches '{spec}'"),
-            _ => bail!("'{spec}' is ambiguous ({} commits)", matches.len()),
+        let matches: Vec<CommitId> = self
+            .commits()?
+            .into_iter()
+            .map(|c| c.id)
+            .filter(|id| id.as_str().starts_with(spec))
+            .collect();
+        match matches.as_slice() {
+            [one] => Ok(one.clone()),
+            [] => Err(Error::UnknownRevision(spec.to_owned())),
+            many => Err(Error::AmbiguousRevision {
+                spec: spec.to_owned(),
+                count: many.len(),
+            }),
         }
     }
 
     /// Commits from the root to `tip`, following first parents.
-    pub fn lineage(&self, tip: &str) -> Result<Vec<Commit>> {
-        let all: HashMap<Id, Commit> = self.commits()?.into_iter().map(|c| (c.id.clone(), c)).collect();
-        let mut out = vec![];
-        let mut cur = Some(tip.to_string());
+    ///
+    /// # Errors
+    /// A parent that is not in the log.
+    pub fn lineage(&self, tip: &CommitId) -> Result<Vec<Commit>> {
+        let mut all: HashMap<CommitId, Commit> = self
+            .commits()?
+            .into_iter()
+            .map(|c| (c.id.clone(), c))
+            .collect();
+        let mut out = Vec::new();
+        let mut cur = Some(tip.clone());
         while let Some(id) = cur {
-            let c = all.get(&id).ok_or_else(|| anyhow!("missing commit {id}"))?;
-            cur = c.parents.first().cloned();
-            out.push(c.clone());
+            let commit = all
+                .remove(&id)
+                .ok_or_else(|| Error::MissingCommit(id.to_string()))?;
+            cur = commit.parents.first().cloned();
+            out.push(commit);
         }
         out.reverse();
         Ok(out)
     }
 
-    /// Lineage and replayed state at `tip` (HEAD when None). Empty memory gives empty state.
-    pub fn state_at(&self, tip: Option<&str>) -> Result<(Vec<Commit>, State)> {
-        let tip = match tip {
-            Some(t) => Some(self.resolve(t)?),
+    /// Lineage and replayed state at `at` (HEAD when `None`). An empty memory gives an empty state.
+    ///
+    /// # Errors
+    /// See [`Repo::resolve`] and [`Repo::lineage`].
+    pub fn state_at(&self, at: Option<&str>) -> Result<(Vec<Commit>, State)> {
+        let tip = match at {
+            Some(spec) => Some(self.resolve(spec)?),
             None => self.head()?,
         };
         match tip {
-            None => Ok((vec![], State::default())),
-            Some(t) => {
-                let lineage = self.lineage(&t)?;
+            None => Ok((Vec::new(), State::default())),
+            Some(tip) => {
+                let lineage = self.lineage(&tip)?;
                 let state = State::replay(&lineage);
                 Ok((lineage, state))
             }
         }
     }
 
-    /// Append a commit on the current branch.
+    /// Append a commit of `ops` on the current branch.
+    ///
+    /// # Errors
+    /// [`Error::NothingToCommit`] for an empty batch; I/O failures.
     pub fn commit(&self, author: &str, message: &str, ops: Vec<Op>) -> Result<Commit> {
         if ops.is_empty() {
-            bail!("nothing to commit: every op is already known");
+            return Err(Error::NothingToCommit);
         }
         let mut refs = self.refs()?;
-        let parents: Vec<Id> = refs.branches.get(&refs.head).cloned().into_iter().collect();
-        let commit = Commit::new(parents, author, message, now_rfc3339(), ops);
-        let mut f = OpenOptions::new().append(true).create(true).open(self.log_path())?;
-        writeln!(f, "{}", serde_json::to_string(&commit)?)?;
+        let parents: Vec<CommitId> = refs.branches.get(&refs.head).cloned().into_iter().collect();
+        let commit = Commit::new(parents, author, message, crate::util::now_rfc3339(), ops);
+        let path = self.log_path();
+        let line = serde_json::to_string(&commit).map_err(|source| Error::Json {
+            path: path.clone(),
+            source,
+        })?;
+        let mut f = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+            .map_err(Error::io(&path))?;
+        writeln!(f, "{line}").map_err(Error::io(&path))?;
         refs.branches.insert(refs.head.clone(), commit.id.clone());
         self.save_refs(&refs)?;
         Ok(commit)
     }
 
+    /// # Errors
+    /// The branch exists, the revision is unknown, or the memory is empty.
     pub fn create_branch(&self, name: &str, at: Option<&str>) -> Result<()> {
         let mut refs = self.refs()?;
         if refs.branches.contains_key(name) {
-            bail!("branch '{name}' already exists");
+            return Err(Error::BranchExists(name.to_owned()));
         }
         let at = match at {
             Some(spec) => self.resolve(spec)?,
-            None => self.head()?.ok_or_else(|| anyhow!("no commits yet to branch from"))?,
+            None => refs.branches.get(&refs.head).cloned().ok_or(Error::Empty)?,
         };
-        refs.branches.insert(name.into(), at);
+        refs.branches.insert(name.to_owned(), at);
         self.save_refs(&refs)
     }
 
+    /// # Errors
+    /// No such branch.
     pub fn switch(&self, name: &str) -> Result<()> {
         let mut refs = self.refs()?;
         if !refs.branches.contains_key(name) {
-            bail!("no branch '{name}' (create it with `mneme branch {name}`)");
+            return Err(Error::NoSuchBranch(name.to_owned()));
         }
-        refs.head = name.into();
+        name.clone_into(&mut refs.head);
         self.save_refs(&refs)
     }
 
-    /// Usage log: what was recalled for which question, and later whether it helped.
-    /// Operational record (not memory content); the learning loop reads it.
-    pub fn append_episode(&self, record: &serde_json::Value) -> Result<()> {
-        let mut f = OpenOptions::new().append(true).create(true).open(self.mem().join("episodes.jsonl"))?;
-        writeln!(f, "{}", serde_json::to_string(record)?)?;
-        Ok(())
-    }
-
+    /// Store a captured payload as `memory/sources/<id>.<ext>` (once).
+    ///
+    /// # Errors
+    /// I/O failure.
     pub fn save_source_payload(&self, id: &str, ext: &str, content: &[u8]) -> Result<PathBuf> {
-        let path = self.mem().join("sources").join(format!("{id}.{ext}"));
+        let path = self
+            .memory_dir()
+            .join("sources")
+            .join(format!("{id}.{ext}"));
         if !path.exists() {
-            fs::write(&path, content)?;
+            write(&path, content)?;
         }
         Ok(path)
     }
+
+    /// Append to the usage log (recall + feedback): the learning signal.
+    ///
+    /// # Errors
+    /// I/O failure.
+    pub fn append_episode(&self, record: &serde_json::Value) -> Result<()> {
+        let path = self.memory_dir().join("episodes.jsonl");
+        let mut f = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+            .map_err(Error::io(&path))?;
+        writeln!(f, "{record}").map_err(Error::io(&path))
+    }
+}
+
+fn strip_bom(s: &str) -> &str {
+    s.trim_start_matches('\u{feff}')
+}
+
+fn read(path: &Path) -> Result<String> {
+    fs::read_to_string(path).map_err(Error::io(path))
+}
+
+fn write(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes).map_err(Error::io(path))
 }

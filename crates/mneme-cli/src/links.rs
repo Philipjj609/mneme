@@ -1,101 +1,101 @@
-//! `mneme capture links <file>`: anything Philip saved, by URL.
+//! `mneme capture links <file>`: anything saved, by URL.
 //!
-//! Each link becomes an anchor with its own evidence, dispatched by kind:
-//!   x.com/<user>/status/<id> → post (full text via the public fxtwitter API), author, links inside it
-//!   x.com/<user>             → account
-//!   github.com/<owner>/<repo>→ repo (+ README)
-//!   huggingface.co/datasets/…→ dataset (+ card)
-//!   anything else            → site (title, description, readable text)
-//! Plus Philip's own note and when he saved it. Links found inside posts are followed one level.
+//! Dispatch by URL: `x.com/<u>/status/<id>` → post (text and X article via the public fxtwitter
+//! API), `x.com/<u>` → account, `github.com/<o>/<r>` → repo + README, `huggingface.co/datasets/…`
+//! → dataset + card, anything else → site (title, description, readable text). Plus the saver's
+//! note and group. Links inside posts are followed one level. Failures are recorded, not guessed.
 //!
-//! File format: one link per line, optional note after it; `# heading` lines name a group
-//! (e.g. `# from x.com/…/status/…`), applied to the links below it until a blank `#` line.
+//! This is sense-level work and moves to organon-text later.
 
 use std::collections::BTreeSet;
 
-use anyhow::{Context, Result};
-use mneme_core::util::{now_rfc3339, sha256_hex, short_hash};
-use mneme_core::*;
+use mneme_core::model::{
+    Anchor, AnchorId, Basis, Claim, ClaimBody, Op, Scope, Source, SourceId, Value,
+};
+use mneme_core::util::now_rfc3339;
+use mneme_core::{Batch, Repo, State};
+use organon_protocol::sha256_hex;
 use serde_json::Value as J;
 
-const AUTHOR: &str = "mneme/capture-links@0.1";
-const UA: &str = "Mozilla/5.0 (compatible; mneme/0.1; +https://github.com/Philipjj609/mneme)";
-const PAGE_TEXT_LIMIT: usize = 6000;
+use crate::net::Fetch;
 
+const AUTHOR: &str = "mneme/capture-links@0.2";
+const PAGE_TEXT_LIMIT: usize = 6000;
+const ARTICLE_TEXT_LIMIT: usize = 16000;
+
+/// One saved link with its note and group.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub url: String,
     pub note: Option<String>,
     pub group: Option<String>,
 }
 
+/// One URL per line, optional note after it; `# heading` names a group for the following
+/// lines until a bare `#`.
+#[must_use]
 pub fn parse_file(text: &str) -> Vec<Entry> {
-    let mut out = vec![];
+    let mut out = Vec::new();
     let mut group: Option<String> = None;
-    for line in text.lines() {
-        let l = line.trim();
-        if l.is_empty() {
-            continue;
-        }
-        if let Some(g) = l.strip_prefix('#') {
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if let Some(g) = line.strip_prefix('#') {
             let g = g.trim();
-            group = if g.is_empty() { None } else { Some(g.to_string()) };
+            group = (!g.is_empty()).then(|| g.to_owned());
             continue;
         }
-        let mut words = l.split_whitespace();
-        let Some(first) = words.next() else { continue };
-        if !first.starts_with("http") {
+        let mut words = line.split_whitespace();
+        let Some(url) = words.next().filter(|w| w.starts_with("http")) else {
             continue;
-        }
-        let note: String = words.collect::<Vec<_>>().join(" ");
-        out.push(Entry { url: first.to_string(), note: (!note.is_empty()).then_some(note), group: group.clone() });
+        };
+        let note = words.collect::<Vec<_>>().join(" ");
+        out.push(Entry {
+            url: url.to_owned(),
+            note: (!note.is_empty()).then_some(note),
+            group: group.clone(),
+        });
     }
     out
 }
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(25)).user_agent(UA).build()
+/// What kind of thing a URL names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkKind {
+    Post,
+    Account,
+    Repo,
+    Dataset,
+    Site,
 }
 
-fn get_text(url: &str, accept: &str) -> Result<String> {
-    let mut req = agent().get(url).set("Accept", accept);
-    if url.contains("api.github.com") {
-        if let Ok(t) = std::env::var("GITHUB_TOKEN") {
-            req = req.set("Authorization", &format!("Bearer {t}"));
-        }
-    }
-    let resp = req.call().with_context(|| format!("GET {url}"))?;
-    let mut buf = Vec::new();
-    std::io::Read::read_to_end(&mut resp.into_reader().take(4_000_000), &mut buf)?;
-    Ok(String::from_utf8_lossy(&buf).into_owned())
-}
-use std::io::Read as _;
-
-/// Canonical anchor id for a URL.
-pub fn anchor_for(url: &str) -> (String, String) {
+/// Canonical anchor id and kind for a URL.
+#[must_use]
+pub fn anchor_for(url: &str) -> (String, LinkKind) {
     let u = url.trim().trim_end_matches(['/', '.', ',', ')', ']']);
-    let rest = u.split_once("://").map(|x| x.1).unwrap_or(u);
+    let rest = u.split_once("://").map_or(u, |(_, r)| r);
     let rest = rest.split(['?', '#']).next().unwrap_or(rest);
     let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
     let host = host.to_lowercase();
-    let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    match host.as_str() {
-        "x.com" | "twitter.com" if segs.len() >= 3 && segs[1] == "status" => {
-            (format!("post:x/{}", segs[2]), "post".into())
+    match (host, segs.as_slice()) {
+        ("x.com" | "twitter.com", [_, "status", id, ..]) => {
+            (format!("post:x/{id}"), LinkKind::Post)
         }
-        "x.com" | "twitter.com" if segs.len() == 1 => (format!("account:x/{}", segs[0].to_lowercase()), "account".into()),
-        "github.com" if segs.len() >= 2 => (format!("repo:{}/{}", segs[0], segs[1]), "repo".into()),
-        "huggingface.co" if segs.len() >= 3 && segs[0] == "datasets" => {
-            (format!("dataset:hf/{}/{}", segs[1], segs[2]), "dataset".into())
+        ("x.com" | "twitter.com", [user]) => (
+            format!("account:x/{}", user.to_lowercase()),
+            LinkKind::Account,
+        ),
+        ("github.com", [owner, repo, ..]) => (format!("repo:{owner}/{repo}"), LinkKind::Repo),
+        ("huggingface.co", ["datasets", owner, name, ..]) => {
+            (format!("dataset:hf/{owner}/{name}"), LinkKind::Dataset)
         }
-        _ => {
-            let p = if segs.is_empty() { String::new() } else { format!("/{}", segs.join("/")) };
-            (format!("site:{host}{p}"), "site".into())
-        }
+        _ if segs.is_empty() => (format!("site:{host}"), LinkKind::Site),
+        _ => (format!("site:{host}/{}", segs.join("/")), LinkKind::Site),
     }
 }
 
-/// Very small HTML reader: title, meta description / og:*, headings, readable text.
+/// What a small HTML reader can get from a page.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Page {
     pub title: Option<String>,
     pub description: Option<String>,
@@ -103,48 +103,52 @@ pub struct Page {
     pub text: String,
 }
 
-fn decode(s: &str) -> String {
-    s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
-        .replace("&#39;", "'").replace("&#039;", "'").replace("&#x27;", "'").replace("&nbsp;", " ").replace("&#8217;", "’")
-        .replace("&#8211;", "–").replace("&#8212;", "—")
+fn decode_entities(s: &str) -> String {
+    const ENTITIES: &[(&str, &str)] = &[
+        ("&amp;", "&"),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", "\""),
+        ("&#39;", "'"),
+        ("&#039;", "'"),
+        ("&#x27;", "'"),
+        ("&nbsp;", " "),
+        ("&#8217;", "’"),
+        ("&#8211;", "–"),
+        ("&#8212;", "—"),
+    ];
+    ENTITIES
+        .iter()
+        .fold(s.to_owned(), |acc, (from, to)| acc.replace(from, to))
 }
 
-fn strip_blocks(html: &str, tag: &str) -> String {
+fn remove_blocks(html: &str, tag: &str) -> String {
     let lower = html.to_lowercase();
     let (open, close) = (format!("<{tag}"), format!("</{tag}>"));
     let mut out = String::with_capacity(html.len());
     let mut i = 0;
-    while let Some(s) = lower[i..].find(&open).map(|x| x + i) {
-        out.push_str(&html[i..s]);
-        match lower[s..].find(&close) {
-            Some(e) => i = s + e + close.len(),
-            None => {
-                i = html.len();
-                break;
-            }
+    while let Some(start) = lower[i..].find(&open).map(|x| x + i) {
+        out.push_str(&html[i..start]);
+        match lower[start..].find(&close) {
+            Some(end) => i = start + end + close.len(),
+            None => return out,
         }
     }
-    if i < html.len() {
-        out.push_str(&html[i..]);
-    }
+    out.push_str(&html[i..]);
     out
 }
 
-fn attr(tag: &str, name: &str) -> Option<String> {
+fn attribute(tag: &str, name: &str) -> Option<String> {
     let lower = tag.to_lowercase();
-    for q in ['"', '\''] {
+    ['"', '\''].iter().find_map(|q| {
         let key = format!("{name}={q}");
-        if let Some(p) = lower.find(&key) {
-            let start = p + key.len();
-            if let Some(end) = tag[start..].find(q) {
-                return Some(decode(tag[start..start + end].trim()));
-            }
-        }
-    }
-    None
+        let start = lower.find(&key)? + key.len();
+        let end = tag[start..].find(*q)?;
+        Some(decode_entities(tag[start..start + end].trim()))
+    })
 }
 
-fn tags_text(html: &str) -> String {
+fn visible_text(html: &str) -> String {
     let mut out = String::with_capacity(html.len() / 2);
     let mut in_tag = false;
     for c in html.chars() {
@@ -158,364 +162,882 @@ fn tags_text(html: &str) -> String {
             _ => {}
         }
     }
-    decode(&out).split_whitespace().collect::<Vec<_>>().join(" ")
+    decode_entities(&out)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-pub fn read_page(html: &str) -> Page {
-    let mut h = html.to_string();
-    for t in ["script", "style", "noscript", "svg", "template"] {
-        h = strip_blocks(&h, t);
+fn truncate_chars(mut s: String, limit: usize) -> String {
+    if s.len() > limit {
+        let cut = s
+            .char_indices()
+            .take_while(|(i, _)| *i < limit)
+            .last()
+            .map_or(0, |(i, _)| i);
+        s.truncate(cut);
+        s.push_str(" …");
     }
-    let lower = h.to_lowercase();
+    s
+}
+
+/// Title, description (meta or og/twitter), h1/h2 headings and readable text of a page.
+#[must_use]
+pub fn read_page(html: &str) -> Page {
+    let html = ["script", "style", "noscript", "svg", "template"]
+        .iter()
+        .fold(html.to_owned(), |h, t| remove_blocks(&h, t));
+    let lower = html.to_lowercase();
     let title = lower.find("<title").and_then(|s| {
-        let s2 = h[s..].find('>')? + s + 1;
-        let e = lower[s2..].find("</title>")? + s2;
-        Some(decode(h[s2..e].trim())).filter(|t| !t.is_empty())
+        let start = html[s..].find('>')? + s + 1;
+        let end = lower[start..].find("</title>")? + start;
+        Some(decode_entities(html[start..end].trim())).filter(|t| !t.is_empty())
     });
-    let mut description = None;
-    let mut og = None;
+    let (mut description, mut social) = (None, None);
     let mut i = 0;
     while let Some(p) = lower[i..].find("<meta").map(|x| x + i) {
-        let end = lower[p..].find('>').map(|x| x + p).unwrap_or(lower.len());
-        let tag = &h[p..end];
-        let key = attr(tag, "name").or_else(|| attr(tag, "property")).unwrap_or_default().to_lowercase();
-        if let Some(c) = attr(tag, "content") {
-            if key == "description" && description.is_none() {
-                description = Some(c);
-            } else if (key == "og:description" || key == "twitter:description") && og.is_none() {
-                og = Some(c);
+        let end = lower[p..].find('>').map_or(lower.len(), |x| x + p);
+        let tag = &html[p..end];
+        let key = attribute(tag, "name")
+            .or_else(|| attribute(tag, "property"))
+            .unwrap_or_default()
+            .to_lowercase();
+        if let Some(content) = attribute(tag, "content") {
+            match key.as_str() {
+                "description" if description.is_none() => description = Some(content),
+                "og:description" | "twitter:description" if social.is_none() => {
+                    social = Some(content)
+                }
+                _ => {}
             }
         }
         i = end;
     }
-    let mut headings = vec![];
+    let mut headings = Vec::new();
     for tag in ["h1", "h2"] {
         let (open, close) = (format!("<{tag}"), format!("</{tag}>"));
         let mut j = 0;
         while let Some(s) = lower[j..].find(&open).map(|x| x + j) {
-            let Some(e) = lower[s..].find(&close).map(|x| x + s) else { break };
-            let t = tags_text(&h[s..e]);
-            let t = t.trim_start_matches(|c: char| c != ' ').trim().to_string();
-            if !t.is_empty() && t.len() < 160 && headings.len() < 12 {
-                headings.push(t);
+            let Some(e) = lower[s..].find(&close).map(|x| x + s) else {
+                break;
+            };
+            // Tags are removed entirely by `visible_text`. (v0 dropped the first word here,
+            // wrongly assuming the tag name survived: every captured heading lost a word.)
+            let text = visible_text(&html[s..e]);
+            if !text.is_empty() && text.len() < 160 && headings.len() < 12 {
+                headings.push(text);
             }
             j = e;
         }
     }
-    let body = lower.find("<body").map(|b| &h[b..]).unwrap_or(&h);
-    let mut text = tags_text(body);
-    if text.len() > PAGE_TEXT_LIMIT {
-        let cut = text.char_indices().take_while(|(i, _)| *i < PAGE_TEXT_LIMIT).last().map(|x| x.0).unwrap_or(0);
-        text.truncate(cut);
-        text.push_str(" …");
+    let body = lower.find("<body").map_or(html.as_str(), |b| &html[b..]);
+    Page {
+        title,
+        description: description.or(social),
+        headings,
+        text: truncate_chars(visible_text(body), PAGE_TEXT_LIMIT),
     }
-    Page { title, description: description.or(og), headings, text }
 }
 
+/// URLs in free text, trailing punctuation removed, in order, without duplicates.
+#[must_use]
 pub fn urls_in(text: &str) -> Vec<String> {
-    let mut out = vec![];
-    for w in text.split(|c: char| c.is_whitespace()) {
-        if let Some(p) = w.find("http") {
-            let u = w[p..].trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '/'));
-            if u.starts_with("http://") || u.starts_with("https://") {
-                if !out.contains(&u.to_string()) {
-                    out.push(u.to_string());
-                }
-            }
+    let mut out: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        let Some(p) = word.find("http") else { continue };
+        let url = word[p..].trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '/'));
+        if (url.starts_with("http://") || url.starts_with("https://"))
+            && !out.iter().any(|u| u == url)
+        {
+            out.push(url.to_owned());
         }
     }
     out
 }
 
-struct Ctx<'a> {
+fn one_line(s: &str, max_chars: usize) -> String {
+    let t = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if t.chars().count() <= max_chars {
+        t
+    } else {
+        format!("{}…", t.chars().take(max_chars).collect::<String>())
+    }
+}
+
+fn today() -> String {
+    now_rfc3339()[..10].to_owned()
+}
+
+/// Capture context: staged changes plus where payloads go.
+struct Capture<'a> {
     repo: &'a Repo,
-    sim: State,
-    ops: Vec<Op>,
+    fetch: &'a dyn Fetch,
+    batch: Batch<'a>,
     now: String,
-    failures: Vec<String>,
 }
 
-impl Ctx<'_> {
-    fn push(&mut self, op: Op) {
-        self.sim.apply(&op, usize::MAX);
-        self.ops.push(op);
+impl Capture<'_> {
+    fn source(
+        &mut self,
+        kind: &str,
+        uri: &str,
+        title: &str,
+        ext: &str,
+        content: &str,
+    ) -> anyhow::Result<SourceId> {
+        let id = SourceId::of(content.as_bytes());
+        if !self.batch.has_source(&id) {
+            self.repo
+                .save_source_payload(id.as_str(), ext, content.as_bytes())?;
+            self.batch.add_source(Source {
+                id: id.clone(),
+                kind: kind.to_owned(),
+                uri: uri.to_owned(),
+                title: title.to_owned(),
+                captured_at: self.now.clone(),
+                content_hash: sha256_hex(content.as_bytes()),
+                files: Default::default(),
+                meta: Default::default(),
+                produced_by: None,
+            });
+        }
+        Ok(id)
     }
-    fn anchor(&mut self, id: &str, kind: &str, name: &str, summary: Option<String>) {
-        let changed = match self.sim.anchors.get(id) {
-            None => true,
-            Some(a) => summary.is_some() && a.anchor.summary != summary,
-        };
-        if changed {
-            self.push(Op::AddAnchor { anchor: Anchor {
-                id: id.into(), kind: kind.into(), name: name.into(), aliases: vec![],
-                scope: "world".into(), summary } });
-        }
+
+    fn anchor(&mut self, id: &str, name: &str, summary: Option<String>) -> anyhow::Result<()> {
+        let id: AnchorId = id.parse()?;
+        self.batch.upsert_anchor(Anchor {
+            id,
+            name: name.to_owned(),
+            aliases: Vec::new(),
+            scope: Scope::world(),
+            summary,
+        });
+        Ok(())
     }
-    fn source(&mut self, kind: &str, uri: &str, title: &str, ext: &str, content: &str) -> Result<String> {
-        let sid = short_hash("s_", content.as_bytes());
-        if !self.sim.sources.contains_key(&sid) {
-            self.repo.save_source_payload(&sid, ext, content.as_bytes())?;
-            self.push(Op::AddSource { source: Source {
-                id: sid.clone(), kind: kind.into(), uri: uri.into(), title: title.into(),
-                captured_at: self.now.clone(), content_hash: sha256_hex(content.as_bytes()), meta: Default::default() } });
+
+    /// Placeholder anchor for something known only by URL (never renames an existing one).
+    fn stub(&mut self, id: &str) -> anyhow::Result<()> {
+        if self.batch.anchor(id).is_none() {
+            self.anchor(id, id.split_once(':').map_or(id, |(_, n)| n), None)?;
         }
-        Ok(sid)
+        Ok(())
     }
-    fn claim(&mut self, about: &str, rel: &str, v: Value, basis: Basis, src: &str, f: impl FnOnce(&mut Claim)) {
-        let mut c = Claim::new(about, rel, v, basis, AUTHOR).with_evidence(src);
-        f(&mut c);
-        let c = c.finalize();
-        if self.sim.claims.get(&c.id).is_some_and(|k| k.status == Status::Active) {
-            return;
-        }
-        for op in self.sim.assert_ops(c) {
-            self.push(op);
-        }
+
+    /// Record a fact unless it is already known: re-observing is not news.
+    fn fact(
+        &mut self,
+        about: &str,
+        relation: &str,
+        value: Value,
+        basis: Basis,
+        source: &SourceId,
+        edit: impl FnOnce(&mut ClaimBody),
+    ) -> anyhow::Result<()> {
+        let about: AnchorId = about.parse()?;
+        let mut body =
+            Claim::draft(about, relation, value, basis, AUTHOR).with_evidence(source.clone());
+        edit(&mut body);
+        self.batch.assert_if_new(body.finalize());
+        Ok(())
+    }
+
+    fn get(&self, url: &str, accept: &str) -> anyhow::Result<String> {
+        self.fetch.text(url, accept)
     }
 }
 
-fn shorten(s: &str, n: usize) -> String {
-    let t: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if t.chars().count() <= n { t } else { format!("{}…", t.chars().take(n).collect::<String>()) }
-}
-
-/// Fetch one URL into the memory. Returns the anchor id and links found inside it (for posts).
-fn fetch(cx: &mut Ctx, url: &str) -> Result<(String, Vec<String>)> {
+/// Fetch one URL into the batch. Returns the anchor id and the links found inside (posts).
+fn fetch_one(cx: &mut Capture, url: &str) -> anyhow::Result<(String, Vec<String>)> {
     let (id, kind) = anchor_for(url);
-    match kind.as_str() {
-        "post" => {
-            let pid = id.trim_start_matches("post:x/");
-            let raw = get_text(&format!("https://api.fxtwitter.com/status/{pid}"), "application/json")?;
-            let j: J = serde_json::from_str(&raw)?;
-            let t = &j["tweet"];
-            let text = t["text"].as_str().unwrap_or_default().to_string();
-            let user = t["author"]["screen_name"].as_str().unwrap_or("unknown").to_string();
-            // X "articles" carry the real content of many posts: keep title + text blocks.
-            let article = t["article"].as_object().map(|a| {
-                let body: Vec<&str> = a.get("content").and_then(|c| c["blocks"].as_array())
-                    .map(|bs| bs.iter().filter_map(|b| b["text"].as_str()).filter(|s| !s.trim().is_empty()).collect())
-                    .unwrap_or_default();
-                let mut body = body.join("\n");
-                if body.len() > 16000 {
-                    let cut = body.char_indices().take_while(|(i, _)| *i < 16000).last().map(|x| x.0).unwrap_or(0);
-                    body.truncate(cut);
-                    body.push_str(" …");
-                }
-                (a.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string(), body)
-            });
-            // keep only what matters: the words, who, when, reach, media kinds, quoted post
-            let keep = serde_json::json!({
-                "url": t["url"], "text": text, "author": { "screen_name": user, "name": t["author"]["name"],
-                "description": t["author"]["description"], "followers": t["author"]["followers"] },
-                "created_at": t["created_at"], "likes": t["likes"], "bookmarks": t["bookmarks"], "views": t["views"],
-                "media": t["media"]["all"].as_array().map(|m| m.iter().map(|x| serde_json::json!({"type": x["type"], "url": x["url"]})).collect::<Vec<_>>()),
-                "quote": t["quote"].as_object().map(|q| serde_json::json!({"url": q.get("url"), "text": q.get("text"), "author": q.get("author").and_then(|a| a.get("screen_name"))})),
-                "card": t["twitter_card"],
-                "article": article.as_ref().map(|(title, body)| serde_json::json!({ "title": title, "text": body })),
-            });
-            let src = cx.source("x-post", url, &format!("@{user} on X"), "json", &serde_json::to_string_pretty(&keep)?)?;
-            let aid = format!("account:x/{}", user.to_lowercase());
-            cx.anchor(&aid, "account", &format!("@{user}"), t["author"]["description"].as_str().map(String::from));
-            let headline = match &article {
-                Some((title, _)) if !title.is_empty() => title.clone(),
-                _ => text.clone(),
-            };
-            cx.anchor(&id, "post", &format!("@{user}: {}", shorten(&headline, 60)), Some(shorten(&headline, 280)));
-            if let Some((title, body)) = &article {
-                cx.claim(&id, "has_article", Value::Text(format!("{title} ({} chars)", body.len())), Basis::Observed, &src, |_| {});
-            }
-            cx.claim(&id, "posted_by", Value::Anchor(aid), Basis::Observed, &src, |c| {
-                c.valid_from = t["created_at"].as_str().map(String::from);
-            });
-            cx.claim(&id, "says", Value::Text(text.clone()), Basis::Stated, &src, |_| {});
-            if let Some(n) = t["likes"].as_f64() {
-                cx.claim(&id, "likes", Value::Number(n), Basis::Observed, &src, |c| c.valid_from = Some(cx_today()));
-            }
-            let videos = t["media"]["videos"].as_array().map(|v| v.len()).unwrap_or(0);
-            if videos > 0 {
-                cx.claim(&id, "has_media", Value::Text(format!("{videos} video(s) — content not transcribed")), Basis::Observed, &src, |_| {});
-            }
-            let mut links = urls_in(&text);
-            if let Some(q) = t["quote"]["url"].as_str() {
-                links.push(q.to_string());
-            }
-            Ok((id, links))
+    let links = match kind {
+        LinkKind::Post => fetch_post(cx, url, &id)?,
+        LinkKind::Account => fetch_account(cx, url, &id).map(|()| Vec::new())?,
+        LinkKind::Repo => fetch_repo(cx, url, &id).map(|()| Vec::new())?,
+        LinkKind::Dataset => fetch_dataset(cx, url, &id).map(|()| Vec::new())?,
+        LinkKind::Site => fetch_site(cx, url, &id).map(|()| Vec::new())?,
+    };
+    Ok((id, links))
+}
+
+fn article_of(t: &J) -> Option<(String, String)> {
+    let a = t["article"].as_object()?;
+    let blocks: Vec<&str> = a
+        .get("content")
+        .and_then(|c| c["blocks"].as_array())
+        .map(|bs| {
+            bs.iter()
+                .filter_map(|b| b["text"].as_str())
+                .filter(|s| !s.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let title = a
+        .get("title")
+        .and_then(J::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Some((title, truncate_chars(blocks.join("\n"), ARTICLE_TEXT_LIMIT)))
+}
+
+fn fetch_post(cx: &mut Capture, url: &str, id: &str) -> anyhow::Result<Vec<String>> {
+    let post_id = id.trim_start_matches("post:x/");
+    let doc: J = serde_json::from_str(&cx.get(
+        &format!("https://api.fxtwitter.com/status/{post_id}"),
+        "application/json",
+    )?)?;
+    let t = &doc["tweet"];
+    let text = t["text"].as_str().unwrap_or_default().to_owned();
+    let user = t["author"]["screen_name"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_owned();
+    let article = article_of(t);
+    let kept = serde_json::json!({
+        "url": t["url"], "text": text,
+        "author": { "screen_name": user, "name": t["author"]["name"], "description": t["author"]["description"], "followers": t["author"]["followers"] },
+        "created_at": t["created_at"], "likes": t["likes"], "bookmarks": t["bookmarks"], "views": t["views"],
+        "media": t["media"]["all"].as_array().map(|m| m.iter().map(|x| serde_json::json!({"type": x["type"], "url": x["url"]})).collect::<Vec<_>>()),
+        "quote": t["quote"].as_object().map(|q| serde_json::json!({"url": q.get("url"), "text": q.get("text"), "author": q.get("author").and_then(|a| a.get("screen_name"))})),
+        "card": t["twitter_card"],
+        "article": article.as_ref().map(|(title, body)| serde_json::json!({ "title": title, "text": body })),
+    });
+    let src = cx.source(
+        "x-post",
+        url,
+        &format!("@{user} on X"),
+        "json",
+        &serde_json::to_string_pretty(&kept)?,
+    )?;
+    let account = format!("account:x/{}", user.to_lowercase());
+    cx.anchor(
+        &account,
+        &format!("@{user}"),
+        t["author"]["description"].as_str().map(str::to_owned),
+    )?;
+    let headline = article
+        .as_ref()
+        .map(|(title, _)| title.as_str())
+        .filter(|t| !t.is_empty())
+        .unwrap_or(&text)
+        .to_owned();
+    cx.anchor(
+        id,
+        &format!("@{user}: {}", one_line(&headline, 60)),
+        Some(one_line(&headline, 280)),
+    )?;
+    let created = t["created_at"].as_str().map(str::to_owned);
+    cx.fact(
+        id,
+        "posted_by",
+        Value::Anchor(account.parse()?),
+        Basis::Observed,
+        &src,
+        |c| c.valid_from = created,
+    )?;
+    cx.fact(
+        id,
+        "says",
+        Value::Text(text.clone()),
+        Basis::Stated,
+        &src,
+        |_| {},
+    )?;
+    if let Some(likes) = t["likes"].as_f64() {
+        cx.fact(
+            id,
+            "likes",
+            Value::Number(likes),
+            Basis::Observed,
+            &src,
+            |c| c.valid_from = Some(today()),
+        )?;
+    }
+    if let Some((title, body)) = &article {
+        cx.fact(
+            id,
+            "has_article",
+            Value::Text(format!("{title} ({} chars)", body.len())),
+            Basis::Observed,
+            &src,
+            |_| {},
+        )?;
+    }
+    let videos = t["media"]["videos"].as_array().map_or(0, Vec::len);
+    if videos > 0 {
+        cx.fact(
+            id,
+            "has_media",
+            Value::Text(format!("{videos} video(s) — content not transcribed")),
+            Basis::Observed,
+            &src,
+            |_| {},
+        )?;
+    }
+    let mut links = urls_in(&text);
+    if let Some(q) = t["quote"]["url"].as_str() {
+        links.push(q.to_owned());
+    }
+    Ok(links)
+}
+
+fn fetch_account(cx: &mut Capture, url: &str, id: &str) -> anyhow::Result<()> {
+    let user = id.trim_start_matches("account:x/");
+    let doc: J = serde_json::from_str(&cx.get(
+        &format!("https://api.fxtwitter.com/{user}"),
+        "application/json",
+    )?)?;
+    let u = &doc["user"];
+    let kept = serde_json::json!({ "screen_name": u["screen_name"], "name": u["name"], "description": u["description"], "followers": u["followers"], "joined": u["joined"], "url": u["url"] });
+    let src = cx.source(
+        "x-account",
+        url,
+        &format!("@{user} profile"),
+        "json",
+        &serde_json::to_string_pretty(&kept)?,
+    )?;
+    let description = u["description"].as_str().map(str::to_owned);
+    cx.anchor(
+        id,
+        &format!("@{}", u["screen_name"].as_str().unwrap_or(user)),
+        description.clone(),
+    )?;
+    if let Some(d) = description {
+        cx.fact(
+            id,
+            "described_as",
+            Value::Text(d),
+            Basis::Stated,
+            &src,
+            |_| {},
+        )?;
+    }
+    if let Some(n) = u["followers"].as_f64() {
+        cx.fact(
+            id,
+            "followers",
+            Value::Number(n),
+            Basis::Observed,
+            &src,
+            |c| c.valid_from = Some(today()),
+        )?;
+    }
+    Ok(())
+}
+
+fn fetch_repo(cx: &mut Capture, url: &str, id: &str) -> anyhow::Result<()> {
+    let full = id.trim_start_matches("repo:").to_owned();
+    if cx.batch.anchor(id).is_none() {
+        let r: J = serde_json::from_str(&cx.get(
+            &format!("https://api.github.com/repos/{full}"),
+            "application/vnd.github+json",
+        )?)?;
+        let name = r["full_name"].as_str().unwrap_or(&full).to_owned();
+        let kept = serde_json::json!({ "full_name": name, "description": r["description"], "language": r["language"], "stargazers_count": r["stargazers_count"], "license": r["license"]["spdx_id"], "homepage": r["homepage"], "topics": r["topics"], "html_url": r["html_url"], "pushed_at": r["pushed_at"] });
+        let src = cx.source(
+            "github-repo",
+            url,
+            &name,
+            "json",
+            &serde_json::to_string_pretty(&kept)?,
+        )?;
+        let description = r["description"]
+            .as_str()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+        cx.anchor(id, &name, description.clone())?;
+        if let Some(d) = description {
+            cx.fact(
+                id,
+                "described_as",
+                Value::Text(d),
+                Basis::Stated,
+                &src,
+                |_| {},
+            )?;
         }
-        "account" => {
-            let user = id.trim_start_matches("account:x/");
-            let raw = get_text(&format!("https://api.fxtwitter.com/{user}"), "application/json")?;
-            let j: J = serde_json::from_str(&raw)?;
-            let u = &j["user"];
-            let keep = serde_json::json!({ "screen_name": u["screen_name"], "name": u["name"], "description": u["description"],
-                "followers": u["followers"], "joined": u["joined"], "url": u["url"] });
-            let src = cx.source("x-account", url, &format!("@{user} profile"), "json", &serde_json::to_string_pretty(&keep)?)?;
-            let desc = u["description"].as_str().map(String::from);
-            cx.anchor(&id, "account", &format!("@{}", u["screen_name"].as_str().unwrap_or(user)), desc.clone());
-            if let Some(d) = desc {
-                cx.claim(&id, "described_as", Value::Text(d), Basis::Stated, &src, |_| {});
-            }
-            if let Some(n) = u["followers"].as_f64() {
-                cx.claim(&id, "followers", Value::Number(n), Basis::Observed, &src, |c| c.valid_from = Some(cx_today()));
-            }
-            Ok((id, vec![]))
+        if let Some(l) = r["language"].as_str() {
+            cx.fact(
+                id,
+                "language",
+                Value::Text(l.to_owned()),
+                Basis::Observed,
+                &src,
+                |_| {},
+            )?;
         }
-        "repo" => {
-            let full = id.trim_start_matches("repo:").to_string();
-            if !cx.sim.anchors.contains_key(&id) {
-                let raw = get_text(&format!("https://api.github.com/repos/{full}"), "application/vnd.github+json")?;
-                let r: J = serde_json::from_str(&raw)?;
-                let name = r["full_name"].as_str().unwrap_or(&full).to_string();
-                let keep = serde_json::json!({ "full_name": name, "description": r["description"], "language": r["language"],
-                    "stargazers_count": r["stargazers_count"], "license": r["license"]["spdx_id"], "homepage": r["homepage"],
-                    "topics": r["topics"], "html_url": r["html_url"], "pushed_at": r["pushed_at"] });
-                let src = cx.source("github-repo", url, &name, "json", &serde_json::to_string_pretty(&keep)?)?;
-                let desc = r["description"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-                cx.anchor(&id, "repo", &name, desc.clone());
-                if let Some(d) = desc {
-                    cx.claim(&id, "described_as", Value::Text(d), Basis::Stated, &src, |_| {});
-                }
-                if let Some(l) = r["language"].as_str() {
-                    cx.claim(&id, "language", Value::Text(l.into()), Basis::Observed, &src, |_| {});
-                }
-                if let Some(n) = r["stargazers_count"].as_f64() {
-                    cx.claim(&id, "stars", Value::Number(n), Basis::Observed, &src, |c| c.valid_from = Some(cx_today()));
-                }
-                if let Some(l) = r["license"]["spdx_id"].as_str().filter(|l| *l != "NOASSERTION") {
-                    cx.claim(&id, "license", Value::Text(l.into()), Basis::Observed, &src, |_| {});
-                }
-            }
-            if !cx.sim.about(&id).any(|c| c.claim.relation == "documented_in") {
-                if let Ok(md) = get_text(&format!("https://api.github.com/repos/{full}/readme"), "application/vnd.github.raw") {
-                    let src = cx.source("github-readme", &format!("https://github.com/{full}#readme"), &format!("{full} README"), "md", &md)?;
-                    cx.claim(&id, "documented_in", Value::Text(format!("README ({} chars)", md.len())), Basis::Observed, &src, |_| {});
-                }
-            }
-            Ok((id, vec![]))
+        if let Some(n) = r["stargazers_count"].as_f64() {
+            cx.fact(id, "stars", Value::Number(n), Basis::Observed, &src, |c| {
+                c.valid_from = Some(today())
+            })?;
         }
-        "dataset" => {
-            let path = id.trim_start_matches("dataset:hf/").to_string();
-            let raw = get_text(&format!("https://huggingface.co/api/datasets/{path}"), "application/json")?;
-            let d: J = serde_json::from_str(&raw)?;
-            let card = get_text(&format!("https://huggingface.co/datasets/{path}/raw/main/README.md"), "text/plain").unwrap_or_default();
-            let card: String = card.chars().take(PAGE_TEXT_LIMIT).collect();
-            let keep = serde_json::json!({ "id": d["id"], "tags": d["tags"], "downloads": d["downloads"], "likes": d["likes"],
-                "lastModified": d["lastModified"], "gated": d["gated"], "card": card });
-            let src = cx.source("hf-dataset", url, &path, "json", &serde_json::to_string_pretty(&keep)?)?;
-            let desc = d["cardData"]["pretty_name"].as_str().map(String::from)
-                .or_else(|| d["description"].as_str().map(|s| shorten(s, 240)));
-            cx.anchor(&id, "dataset", &path, desc);
-            if let Some(n) = d["downloads"].as_f64() {
-                cx.claim(&id, "downloads", Value::Number(n), Basis::Observed, &src, |c| c.valid_from = Some(cx_today()));
-            }
-            for tag in d["tags"].as_array().into_iter().flatten().filter_map(|t| t.as_str()) {
-                if let Some(l) = tag.strip_prefix("license:") {
-                    cx.claim(&id, "license", Value::Text(l.into()), Basis::Observed, &src, |_| {});
-                }
-            }
-            Ok((id, vec![]))
-        }
-        _ => {
-            let html = get_text(url, "text/html,application/xhtml+xml")?;
-            let p = read_page(&html);
-            let mut md = format!("# {}\n\nurl: {url}\n", p.title.clone().unwrap_or_default());
-            if let Some(d) = &p.description {
-                md.push_str(&format!("description: {d}\n"));
-            }
-            if !p.headings.is_empty() {
-                md.push_str(&format!("headings: {}\n", p.headings.join(" | ")));
-            }
-            md.push_str(&format!("\n{}\n", p.text));
-            let host = id.trim_start_matches("site:").to_string();
-            let src = cx.source("web-page", url, p.title.as_deref().unwrap_or(&host), "md", &md)?;
-            let name = host.clone();
-            cx.anchor(&id, "site", &name, p.description.clone().or(p.title.clone()));
-            if let Some(t) = &p.title {
-                cx.claim(&id, "title", Value::Text(t.clone()), Basis::Observed, &src, |_| {});
-            }
-            if let Some(d) = p.description {
-                cx.claim(&id, "described_as", Value::Text(d), Basis::Stated, &src, |_| {});
-            }
-            if p.text.len() < 200 {
-                cx.claim(&id, "capture_status", Value::Text("little readable text (likely rendered by JavaScript)".into()), Basis::Observed, &src, |_| {});
-            }
-            Ok((id, vec![]))
+        if let Some(l) = r["license"]["spdx_id"]
+            .as_str()
+            .filter(|l| *l != "NOASSERTION")
+        {
+            cx.fact(
+                id,
+                "license",
+                Value::Text(l.to_owned()),
+                Basis::Observed,
+                &src,
+                |_| {},
+            )?;
         }
     }
+    let documented = cx
+        .batch
+        .active_about(id)
+        .iter()
+        .any(|c| c.relation.as_str() == "documented_in");
+    if !documented {
+        if let Ok(md) = cx.get(
+            &format!("https://api.github.com/repos/{full}/readme"),
+            "application/vnd.github.raw",
+        ) {
+            let src = cx.source(
+                "github-readme",
+                &format!("https://github.com/{full}#readme"),
+                &format!("{full} README"),
+                "md",
+                &md,
+            )?;
+            cx.fact(
+                id,
+                "documented_in",
+                Value::Text(format!("README ({} chars)", md.len())),
+                Basis::Observed,
+                &src,
+                |_| {},
+            )?;
+        }
+    }
+    Ok(())
 }
 
-fn cx_today() -> String {
-    now_rfc3339()[..10].to_string()
+fn fetch_dataset(cx: &mut Capture, url: &str, id: &str) -> anyhow::Result<()> {
+    let path = id.trim_start_matches("dataset:hf/").to_owned();
+    let d: J = serde_json::from_str(&cx.get(
+        &format!("https://huggingface.co/api/datasets/{path}"),
+        "application/json",
+    )?)?;
+    let card = cx
+        .get(
+            &format!("https://huggingface.co/datasets/{path}/raw/main/README.md"),
+            "text/plain",
+        )
+        .unwrap_or_default();
+    let card: String = card.chars().take(PAGE_TEXT_LIMIT).collect();
+    let kept = serde_json::json!({ "id": d["id"], "tags": d["tags"], "downloads": d["downloads"], "likes": d["likes"], "lastModified": d["lastModified"], "gated": d["gated"], "card": card });
+    let src = cx.source(
+        "hf-dataset",
+        url,
+        &path,
+        "json",
+        &serde_json::to_string_pretty(&kept)?,
+    )?;
+    let summary = d["cardData"]["pretty_name"]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| d["description"].as_str().map(|s| one_line(s, 240)));
+    cx.anchor(id, &path, summary)?;
+    if let Some(n) = d["downloads"].as_f64() {
+        cx.fact(
+            id,
+            "downloads",
+            Value::Number(n),
+            Basis::Observed,
+            &src,
+            |c| c.valid_from = Some(today()),
+        )?;
+    }
+    for license in d["tags"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(J::as_str)
+        .filter_map(|t| t.strip_prefix("license:"))
+    {
+        cx.fact(
+            id,
+            "license",
+            Value::Text(license.to_owned()),
+            Basis::Observed,
+            &src,
+            |_| {},
+        )?;
+    }
+    Ok(())
 }
 
-pub fn capture(repo: &Repo, state: &State, entries: &[Entry], person: &str, follow: bool) -> Result<(Vec<Op>, Vec<String>)> {
-    let mut cx = Ctx { repo, sim: state.clone(), ops: vec![], now: now_rfc3339(), failures: vec![] };
-    let personal_src = {
-        let listing: String = entries.iter().map(|e| {
-            format!("{} {}{}\n", e.url, e.note.clone().unwrap_or_default(), e.group.as_ref().map(|g| format!("  [{g}]")).unwrap_or_default())
-        }).collect();
-        cx.source("saved-links", "philip:pasted-links", &format!("{} links saved by Philip", entries.len()), "txt", &listing)?
+fn fetch_site(cx: &mut Capture, url: &str, id: &str) -> anyhow::Result<()> {
+    let page = read_page(&cx.get(url, "text/html,application/xhtml+xml")?);
+    let mut md = format!(
+        "# {}\n\nurl: {url}\n",
+        page.title.clone().unwrap_or_default()
+    );
+    if let Some(d) = &page.description {
+        md.push_str(&format!("description: {d}\n"));
+    }
+    if !page.headings.is_empty() {
+        md.push_str(&format!("headings: {}\n", page.headings.join(" | ")));
+    }
+    md.push_str(&format!("\n{}\n", page.text));
+    let host = id.trim_start_matches("site:").to_owned();
+    let src = cx.source(
+        "web-page",
+        url,
+        page.title.as_deref().unwrap_or(&host),
+        "md",
+        &md,
+    )?;
+    cx.anchor(
+        id,
+        &host,
+        page.description.clone().or_else(|| page.title.clone()),
+    )?;
+    if let Some(t) = page.title {
+        cx.fact(id, "title", Value::Text(t), Basis::Observed, &src, |_| {})?;
+    }
+    if let Some(d) = page.description {
+        cx.fact(
+            id,
+            "described_as",
+            Value::Text(d),
+            Basis::Stated,
+            &src,
+            |_| {},
+        )?;
+    }
+    if page.text.len() < 200 {
+        cx.fact(
+            id,
+            "capture_status",
+            Value::Text("little readable text (likely rendered by JavaScript)".into()),
+            Basis::Observed,
+            &src,
+            |_| {},
+        )?;
+    }
+    Ok(())
+}
+
+/// Result of a capture run.
+pub struct Outcome {
+    pub ops: Vec<Op>,
+    pub failures: Vec<String>,
+}
+
+/// Options for [`capture`].
+pub struct Options<'a> {
+    /// Anchor of who saved the links, or `None` when research found them.
+    pub person: Option<&'a str>,
+    /// Fetch links found inside posts.
+    pub follow: bool,
+}
+
+/// Capture `entries` into a batch over `state`.
+///
+/// # Errors
+/// Storing payloads failed (fetch failures are recorded in the outcome instead).
+pub fn capture(
+    repo: &Repo,
+    state: &State,
+    fetch: &dyn Fetch,
+    entries: &[Entry],
+    opts: &Options,
+    log: &mut dyn FnMut(&str),
+) -> anyhow::Result<Outcome> {
+    let mut cx = Capture {
+        repo,
+        fetch,
+        batch: Batch::new(state),
+        now: now_rfc3339(),
     };
+    let listing: String = entries
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {}{}\n",
+                e.url,
+                e.note.clone().unwrap_or_default(),
+                e.group
+                    .as_ref()
+                    .map(|g| format!("  [{g}]"))
+                    .unwrap_or_default()
+            )
+        })
+        .collect();
+    let saved = cx.source(
+        "saved-links",
+        "philip:pasted-links",
+        &format!("{} links", entries.len()),
+        "txt",
+        &listing,
+    )?;
+    let personal = Scope::new("personal:philip");
+    let mut failures = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut follow_queue: Vec<(String, String)> = vec![];
-    for (i, e) in entries.iter().enumerate() {
-        let (id, kind) = anchor_for(&e.url);
-        eprint!("[{}/{}] {} ", i + 1, entries.len(), id);
-        match fetch(&mut cx, &e.url) {
+    let mut found: Vec<(String, String)> = Vec::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        let (id, _) = anchor_for(&entry.url);
+        match fetch_one(&mut cx, &entry.url) {
             Ok((aid, links)) => {
-                eprintln!("ok");
-                seen.insert(aid.clone());
-                for l in links {
-                    follow_queue.push((aid.clone(), l));
-                }
+                log(&format!("[{}/{}] {id} ok", i + 1, entries.len()));
+                found.extend(links.into_iter().map(|l| (aid.clone(), l)));
+                seen.insert(aid);
             }
             Err(err) => {
-                eprintln!("FAILED: {err:#}");
-                cx.failures.push(format!("{}: {err:#}", e.url));
-                cx.anchor(&id, &kind, id.split_once(':').map(|x| x.1).unwrap_or(&id), None);
-                cx.claim(&id, "capture_status", Value::Text(format!("fetch failed: {}", shorten(&format!("{err:#}"), 120))), Basis::Observed, &personal_src, |_| {});
+                log(&format!(
+                    "[{}/{}] {id} FAILED: {err:#}",
+                    i + 1,
+                    entries.len()
+                ));
+                failures.push(format!("{}: {err:#}", entry.url));
+                cx.stub(&id)?;
+                let status = format!("fetch failed: {}", one_line(&format!("{err:#}"), 120));
+                cx.fact(
+                    &id,
+                    "capture_status",
+                    Value::Text(status),
+                    Basis::Observed,
+                    &saved,
+                    |_| {},
+                )?;
             }
         }
-        // `--person none`: found by research, not saved by a person.
-        if person != "none" {
-            cx.claim(&id, "saved_by", Value::Anchor(person.into()), Basis::Observed, &personal_src, |c| {
-                c.valid_from = Some(cx_today());
-                c.scope = "personal:philip".into();
-            });
+        if let Some(person) = opts.person {
+            let scope = personal.clone();
+            cx.fact(
+                &id,
+                "saved_by",
+                Value::Anchor(person.parse()?),
+                Basis::Observed,
+                &saved,
+                |c| {
+                    c.valid_from = Some(today());
+                    c.scope = scope;
+                },
+            )?;
         }
-        if let Some(n) = &e.note {
-            cx.claim(&id, "note", Value::Text(n.clone()), Basis::Stated, &personal_src, |c| c.scope = "personal:philip".into());
+        if let Some(note) = &entry.note {
+            let scope = personal.clone();
+            cx.fact(
+                &id,
+                "note",
+                Value::Text(note.clone()),
+                Basis::Stated,
+                &saved,
+                |c| c.scope = scope,
+            )?;
         }
-        if let Some(g) = &e.group {
-            let (gid, _) = anchor_for(g.trim_start_matches("from ").trim());
-            if g.contains("http") || g.starts_with("from ") {
-                cx.claim(&id, "listed_in", Value::Anchor(gid), Basis::Stated, &personal_src, |_| {});
-            } else {
-                cx.claim(&id, "saved_group", Value::Text(g.clone()), Basis::Stated, &personal_src, |c| c.scope = "personal:philip".into());
-            }
-        }
-    }
-    // Links mentioned inside posts: link them, and fetch them once if we don't know them yet.
-    for (from, url) in follow_queue {
-        let (tid, tkind) = anchor_for(&url);
-        // X article links are carried inside the post itself (article text), not separate pages.
-        if tid == from || url.contains("t.co/") || url.contains("x.com/i/article") {
-            continue;
-        }
-        if follow && !cx.sim.anchors.contains_key(&tid) && !seen.contains(&tid) {
-            eprint!("  follow {tid} ");
-            match fetch(&mut cx, &url) {
-                Ok(_) => eprintln!("ok"),
-                Err(err) => {
-                    eprintln!("FAILED: {err:#}");
-                    cx.anchor(&tid, &tkind, tid.split_once(':').map(|x| x.1).unwrap_or(&tid), None);
+        if let Some(group) = &entry.group {
+            match group.strip_prefix("from ").filter(|g| g.contains("http")) {
+                Some(origin) => {
+                    let (origin_id, _) = anchor_for(origin.trim());
+                    cx.stub(&origin_id)?;
+                    cx.fact(
+                        &id,
+                        "listed_in",
+                        Value::Anchor(origin_id.parse()?),
+                        Basis::Stated,
+                        &saved,
+                        |_| {},
+                    )?;
+                }
+                None => {
+                    let scope = personal.clone();
+                    cx.fact(
+                        &id,
+                        "saved_group",
+                        Value::Text(group.clone()),
+                        Basis::Stated,
+                        &saved,
+                        |c| c.scope = scope,
+                    )?;
                 }
             }
-            seen.insert(tid.clone());
-        } else if !cx.sim.anchors.contains_key(&tid) {
-            cx.anchor(&tid, &tkind, tid.split_once(':').map(|x| x.1).unwrap_or(&tid), None);
         }
-        let src = cx.sim.sources_supporting(&from).into_iter().next().unwrap_or(personal_src.clone());
-        cx.claim(&from, "links_to", Value::Anchor(tid), Basis::Observed, &src, |_| {});
     }
-    Ok((cx.ops, cx.failures))
+
+    // Links mentioned inside posts: fetch them once (if new), then link them.
+    for (from, url) in found {
+        let (target, _) = anchor_for(&url);
+        // X article links are carried inside the post itself; t.co are redirect shells.
+        if target == from || url.contains("t.co/") || url.contains("x.com/i/article") {
+            continue;
+        }
+        if opts.follow && cx.batch.anchor(&target).is_none() && !seen.contains(&target) {
+            match fetch_one(&mut cx, &url) {
+                Ok(_) => log(&format!("  follow {target} ok")),
+                Err(err) => log(&format!("  follow {target} FAILED: {err:#}")),
+            }
+            seen.insert(target.clone());
+        }
+        cx.stub(&target)?;
+        let evidence = cx
+            .batch
+            .sources_supporting(&from)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| saved.clone());
+        cx.fact(
+            &from,
+            "links_to",
+            Value::Anchor(target.parse()?),
+            Basis::Observed,
+            &evidence,
+            |_| {},
+        )?;
+    }
+    Ok(Outcome {
+        ops: cx.batch.into_ops(),
+        failures,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::fake::Fake;
+
+    fn relations(ops: &[Op]) -> Vec<String> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Op::AddClaim { claim } => Some(format!("{} {}", claim.about, claim.relation)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn link_file_keeps_notes_and_groups() {
+        let entries = parse_file("https://a.dev/ note here\n# from https://x.com/u/status/1\nhttps://b.dev\n#\nhttps://c.dev\nnot a link\n");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].note.as_deref(), Some("note here"));
+        assert_eq!(
+            entries[1].group.as_deref(),
+            Some("from https://x.com/u/status/1")
+        );
+        assert_eq!(entries[2].group, None);
+    }
+
+    #[test]
+    fn urls_map_to_anchor_ids() {
+        assert_eq!(
+            anchor_for("https://x.com/User/status/123?s=20").0,
+            "post:x/123"
+        );
+        assert_eq!(
+            anchor_for("https://x.com/NeroPursue").0,
+            "account:x/neropursue"
+        );
+        assert_eq!(anchor_for("https://github.com/o/r/tree/main").0, "repo:o/r");
+        assert_eq!(
+            anchor_for("https://huggingface.co/datasets/a/b").0,
+            "dataset:hf/a/b"
+        );
+        assert_eq!(
+            anchor_for("https://www.Scrolltide.co/").0,
+            "site:scrolltide.co"
+        );
+        assert_eq!(
+            anchor_for("https://claude.ai/code").0,
+            "site:claude.ai/code"
+        );
+    }
+
+    #[test]
+    fn page_reader_finds_title_description_and_text() {
+        let p = read_page(
+            r#"<html><head><title>Land &amp; Book</title><meta name="description" content="Hand-picked &#039;sites&#039;"><script>var x="<h1>no</h1>";</script></head><body><h1 class="t">Website inspiration</h1><p>Updated daily.</p></body></html>"#,
+        );
+        assert_eq!(p.title.as_deref(), Some("Land & Book"));
+        assert_eq!(p.description.as_deref(), Some("Hand-picked 'sites'"));
+        assert_eq!(p.headings, ["Website inspiration"]);
+        assert!(p.text.contains("Updated daily.") && !p.text.contains("var x"));
+    }
+
+    #[test]
+    fn urls_in_text_drop_trailing_punctuation() {
+        assert_eq!(
+            urls_in("see http://a.dev, and (https://b.dev/x). again http://a.dev"),
+            ["http://a.dev", "https://b.dev/x"]
+        );
+    }
+
+    #[test]
+    fn post_capture_reads_article_and_follows_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::init(dir.path()).unwrap();
+        let post = serde_json::json!({"tweet": {"url": "https://x.com/u/status/9", "text": "Great list: http://tool.dev", "author": {"screen_name": "U", "description": "builder"},
+            "likes": 10, "article": {"title": "The guide", "content": {"blocks": [{"text": "Step one."}, {"text": "Step two."}]}}}});
+        let fake = Fake(
+            [
+                (
+                    "https://api.fxtwitter.com/status/9".to_owned(),
+                    post.to_string(),
+                ),
+                (
+                    "http://tool.dev".to_owned(),
+                    "<title>Tool</title><meta name=description content='x'><body>A tool.</body>"
+                        .to_owned(),
+                ),
+            ]
+            .into(),
+        );
+        let mut lines = Vec::new();
+        let opts = Options {
+            person: Some("person:philip"),
+            follow: true,
+        };
+        let out = capture(
+            &repo,
+            &State::default(),
+            &fake,
+            &parse_file("https://x.com/u/status/9 why I saved it"),
+            &opts,
+            &mut |l| lines.push(l.to_owned()),
+        )
+        .unwrap();
+        assert!(out.failures.is_empty(), "{:?}", out.failures);
+        let rels = relations(&out.ops);
+        for want in [
+            "post:x/9 says",
+            "post:x/9 has_article",
+            "post:x/9 saved_by",
+            "post:x/9 note",
+            "post:x/9 links_to",
+            "site:tool.dev title",
+        ] {
+            assert!(rels.iter().any(|r| r == want), "missing {want} in {rels:?}");
+        }
+        assert!(lines.iter().any(|l| l.contains("follow site:tool.dev ok")));
+    }
+
+    #[test]
+    fn failures_are_recorded_not_guessed_and_research_saves_nothing_personal() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::init(dir.path()).unwrap();
+        let opts = Options {
+            person: None,
+            follow: false,
+        };
+        let out = capture(
+            &repo,
+            &State::default(),
+            &Fake::default(),
+            &parse_file("https://blocked.dev"),
+            &opts,
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(out.failures.len(), 1);
+        assert_eq!(
+            relations(&out.ops),
+            ["site:blocked.dev capture_status"],
+            "no saved_by when person is None"
+        );
+    }
 }
