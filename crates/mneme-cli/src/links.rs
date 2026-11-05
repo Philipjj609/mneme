@@ -475,10 +475,13 @@ pub fn capture(repo: &Repo, state: &State, entries: &[Entry], person: &str, foll
                 cx.claim(&id, "capture_status", Value::Text(format!("fetch failed: {}", shorten(&format!("{err:#}"), 120))), Basis::Observed, &personal_src, |_| {});
             }
         }
-        cx.claim(&id, "saved_by", Value::Anchor(person.into()), Basis::Observed, &personal_src, |c| {
-            c.valid_from = Some(cx_today());
-            c.scope = "personal:philip".into();
-        });
+        // `--person none`: found by research, not saved by a person.
+        if person != "none" {
+            cx.claim(&id, "saved_by", Value::Anchor(person.into()), Basis::Observed, &personal_src, |c| {
+                c.valid_from = Some(cx_today());
+                c.scope = "personal:philip".into();
+            });
+        }
         if let Some(n) = &e.note {
             cx.claim(&id, "note", Value::Text(n.clone()), Basis::Stated, &personal_src, |c| c.scope = "personal:philip".into());
         }

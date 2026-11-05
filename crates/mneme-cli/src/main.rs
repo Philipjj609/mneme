@@ -119,6 +119,7 @@ enum CaptureCmd {
         /// Do not fetch links found inside posts
         #[arg(long)]
         no_follow: bool,
+        /// Who saved these links (anchor id), or `none` when research found them
         #[arg(long, default_value = "person:philip")]
         person: String,
     },
@@ -343,8 +344,14 @@ fn main() -> Result<()> {
                     let mark = if fill.claims.is_empty() { "[ ]" } else { "[x]" };
                     println!("{mark} {}", fill.slot.label);
                     for cs in fill.claims {
-                        let other = if cs.claim.about == id { cs.claim.value.display() } else { cs.claim.about.clone() };
-                        println!("      {} {} ({})", cs.claim.relation, other.chars().take(90).collect::<String>(), cs.claim.basis.as_str());
+                        // Detail view: full text. Incoming links read from the other side ("← X part_of").
+                        let c = &cs.claim;
+                        let conf = c.confidence.map(|x| format!(" {x:.2}")).unwrap_or_default();
+                        if c.about == id {
+                            println!("      {} {} ({}{conf})", c.relation, c.value.display(), c.basis.as_str());
+                        } else {
+                            println!("      ← {} {} ({}{conf})", c.about, c.relation, c.basis.as_str());
+                        }
                     }
                 }
             }
