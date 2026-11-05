@@ -19,6 +19,41 @@ fn get(url: &str) -> Result<(J, Option<String>)> {
     Ok((serde_json::from_str(&resp.into_string()?)?, link))
 }
 
+/// README of each repo as a source, plus an observed `documented_in` claim citing it.
+/// The README is the evidence a later digest interprets into mechanisms, limits, etc.
+pub fn readmes(repo: &Repo, state: &State, names: &[String]) -> Result<Vec<Op>> {
+    let mut ops = vec![];
+    let now = now_rfc3339();
+    for full in names {
+        let aid = format!("repo:{full}");
+        if !state.anchors.contains_key(&aid) {
+            anyhow::bail!("{aid} is not in memory yet (capture it first)");
+        }
+        let url = format!("https://api.github.com/repos/{full}/readme");
+        let mut req = ureq::get(&url).set("User-Agent", "mneme/0.1").set("Accept", "application/vnd.github.raw");
+        if let Ok(t) = std::env::var("GITHUB_TOKEN") {
+            req = req.set("Authorization", &format!("Bearer {t}"));
+        }
+        let text = req.call().with_context(|| format!("GET {url}"))?.into_string()?;
+        let sid = short_hash("s_", text.as_bytes());
+        if state.sources.contains_key(&sid) {
+            eprintln!("{full}: README unchanged");
+            continue;
+        }
+        repo.save_source_payload(&sid, "md", text.as_bytes())?;
+        eprintln!("{full}: README {} chars -> {sid}", text.len());
+        ops.push(Op::AddSource { source: Source {
+            id: sid.clone(), kind: "github-readme".into(), uri: format!("https://github.com/{full}#readme"),
+            title: format!("{full} README"), captured_at: now.clone(), content_hash: sha256_hex(text.as_bytes()),
+            meta: Default::default() } });
+        let c = Claim::new(&aid, "documented_in", Value::Text(format!("README ({} chars)", text.len())), Basis::Observed, AUTHOR)
+            .with_evidence(&sid)
+            .finalize();
+        ops.extend(state.assert_ops(c));
+    }
+    Ok(ops)
+}
+
 pub fn github_stars(repo: &Repo, state: &State, user: &str, person: &str) -> Result<Vec<Op>> {
     let mut sim = state.clone();
     let mut ops: Vec<Op> = vec![];

@@ -7,7 +7,9 @@
 - **Comprehension you can measure.** Each kind of thing has a *frame*, a list of what understanding it involves (purpose, mechanism, alternatives, limits…). Filled slots are what we know. **Empty slots are the frontier**, which becomes the research agenda.
 - **Many views of one memory.** Graph, clusters, comprehension map, history, and Karpathy-style markdown pages. All regenerable.
 
-Design: [docs/DESIGN.md](docs/DESIGN.md) · Plan: [docs/PLAN.md](docs/PLAN.md)
+Design: [docs/DESIGN.md](docs/DESIGN.md) · Plan: [docs/PLAN.md](docs/PLAN.md) · How things are tracked: [docs/TRACKING.md](docs/TRACKING.md)
+
+The explorer's graph has three modes. **Map** shows nested boxes (category → concept → tools), with edges only for the selection. **Network** is a force layout of all links. **Focus** shows only the selection and its neighbours.
 
 ## Use
 
@@ -29,6 +31,9 @@ To browse, open `projections/view.html` (it needs internet once, for the graph l
 | `diff <a> <b>` | what changed between commits or branches |
 | `branch [name] [--at x]`, `switch <name>` | alternative lines of memory (what-ifs, experiments) |
 | `build --at <commit>` | views of the memory as it was then |
+| `recall "<question>" [--budget 4000]` | ask the memory: a context package of what's known, why each item is there, and what is NOT known; logged as an episode |
+| `feedback <episode> good\|partial\|bad [--used ids] [--missing "…"]` | rate a recall (training signal for recall that learns) |
+| `capture readme owner/name …` | add READMEs of repos in memory as deeper sources to digest |
 | `page <anchor>` | what is known about one thing, slot by slot |
 | `frontier [--kind repo]` | most connected, least understood things: the research agenda |
 

@@ -60,6 +60,27 @@ enum Cmd {
     Status,
     /// Print what the memory knows about an anchor, slot by slot
     Page { id: String },
+    /// Ask the memory: compile a context package for a question (and log the episode)
+    Recall {
+        question: Vec<String>,
+        /// Token budget for the package (~4 chars per token)
+        #[arg(long, default_value_t = 4000)]
+        budget: usize,
+        #[arg(short, long, default_value_t = 25)]
+        n: usize,
+    },
+    /// Say whether a recall helped: feeds the learning loop
+    Feedback {
+        episode: String,
+        /// good | partial | bad
+        verdict: String,
+        /// Anchor ids that were actually used
+        #[arg(long, value_delimiter = ',')]
+        used: Vec<String>,
+        /// What was missing
+        #[arg(long)]
+        missing: Option<String>,
+    },
     /// Anchors with the least understanding: empty frame slots, ranked
     Frontier {
         #[arg(long)]
@@ -78,6 +99,11 @@ enum CaptureCmd {
         /// Anchor id of the person who starred them
         #[arg(long, default_value = "person:philip")]
         person: String,
+    },
+    /// The README of GitHub repos already in memory (deeper source for digest)
+    Readme {
+        /// owner/name, one or more
+        repos: Vec<String>,
     },
 }
 
@@ -100,6 +126,38 @@ fn main() -> Result<()> {
             let n = ops.len();
             let c = repo.commit("mneme/capture-github@0.1", &format!("capture: GitHub stars of {user}"), ops)?;
             println!("{} committed ({n} ops)", c.id);
+        }
+        Cmd::Capture { what: CaptureCmd::Readme { repos } } => {
+            let (_, state) = repo.state_at(None)?;
+            let ops = capture::readmes(&repo, &state, &repos)?;
+            let n = ops.len();
+            let c = repo.commit("mneme/capture-github@0.1", &format!("capture: READMEs of {}", repos.join(", ")), ops)?;
+            println!("{} committed ({n} ops)", c.id);
+        }
+        Cmd::Recall { question, budget, n } => {
+            let q = question.join(" ");
+            let (lineage, state) = repo.state_at(None)?;
+            let frames = load_frames(&repo.frames_dir())?;
+            let head = lineage.last().map(|c| c.id.clone()).unwrap_or_default();
+            let r = mneme_core::recall::recall(&state, &q, n);
+            let pkg = mneme_core::recall::render(&state, &frames, &r, &head, budget);
+            let ep = short_hash("e_", format!("{q}{}", now_rfc3339()).as_bytes());
+            repo.append_episode(&serde_json::json!({
+                "type": "recall", "id": ep, "time": now_rfc3339(), "head": head, "question": q,
+                "budget": budget, "included": pkg.included, "omitted": pkg.omitted,
+                "scores": r.items.iter().map(|i| (i.id.clone(), (i.score * 1000.0).round() / 1000.0)).collect::<Vec<_>>()
+            }))?;
+            println!("{}episode: {ep}  (rate it: mneme feedback {ep} good|partial|bad --used id,id --missing \"…\")", pkg.markdown);
+        }
+        Cmd::Feedback { episode, verdict, used, missing } => {
+            if !["good", "partial", "bad"].contains(&verdict.as_str()) {
+                anyhow::bail!("verdict must be good, partial or bad");
+            }
+            repo.append_episode(&serde_json::json!({
+                "type": "feedback", "episode": episode, "time": now_rfc3339(), "verdict": verdict,
+                "used": used, "missing": missing
+            }))?;
+            println!("feedback recorded for {episode}");
         }
         Cmd::Digest { file } => {
             let text = std::fs::read_to_string(&file)?;

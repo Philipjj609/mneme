@@ -63,12 +63,16 @@ pub fn profile<'a>(frame: &'a Frame, state: &'a State, anchor: &str) -> Vec<Slot
     frame
         .slots
         .iter()
-        .map(|slot| SlotFill {
-            slot,
-            claims: state
+        .map(|slot| {
+            let mut claims: Vec<&ClaimState> = state
                 .active()
                 .filter(|cs| slot.relations.iter().any(|r| slot_matches(r, cs, anchor)))
-                .collect(),
+                .collect();
+            // Stable, readable order: by relation, then by text (so "1 ·", "2 ·" read in order).
+            claims.sort_by(|a, b| {
+                (a.claim.relation.as_str(), a.claim.value.display()).cmp(&(b.claim.relation.as_str(), b.claim.value.display()))
+            });
+            SlotFill { slot, claims }
         })
         .collect()
 }

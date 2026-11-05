@@ -12,7 +12,7 @@ pub struct RelInfo {
 
 pub fn info(rel: &str) -> RelInfo {
     let (family, functional, stance) = match rel {
-        "described_as" | "homepage" | "license" | "language" | "stars" | "owned_by" => {
+        "described_as" | "homepage" | "license" | "language" | "stars" | "owned_by" | "documented_in" => {
             ("meta", true, Stance::Is)
         }
         "tagged" => ("topic", false, Stance::Is),

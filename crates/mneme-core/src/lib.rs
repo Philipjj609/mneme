@@ -8,6 +8,7 @@ pub mod digest;
 pub mod frames;
 pub mod model;
 pub mod project;
+pub mod recall;
 pub mod relations;
 pub mod state;
 pub mod store;

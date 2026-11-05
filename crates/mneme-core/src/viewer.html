@@ -55,6 +55,8 @@ aside { background: var(--panel); overflow: auto; min-height: 0; }
 .view { position: absolute; inset: 0; overflow: auto; display: none; }
 .view.active { display: block; }
 #cy { position: absolute; inset: 0; }
+#gbar { position: absolute; top: 10px; left: 10px; z-index: 5; display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 4px; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+#gbar button { padding: 4px 10px; font-size: 13px; }
 h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 0 6px; }
 h3:first-child { margin-top: 0; }
 label.chk { display: flex; align-items: center; gap: 7px; padding: 2px 0; cursor: pointer; user-select: none; }
@@ -149,6 +151,9 @@ footer input[type=range] { flex: 1; accent-color: var(--accent); }
   <div id="tlabel"></div>
 </footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/layout-base@2.0.1/layout-base.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cose-base@2.2.0/cose-base.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
 <script>
 window.MNEME = /*MNEME_DATA*/null;
 </script>
@@ -225,76 +230,204 @@ document.getElementById('filters').addEventListener('change', e => {
 });
 
 // ---- graph view ----
-let cy = null;
-function initGraph() {
+// Three layouts of the same memory:
+//   map     — nested boxes (category → concept → repos); edges only for the selection
+//   network — free force layout of everything visible, all edge layers
+//   focus   — only the selection and its neighbours, in rings
+let cy = null, mode = 'map', focusOn = false;
+const HAS_FCOSE = () => typeof cytoscape !== 'undefined' && cytoscape('layout', 'fcose');
+const IMPLIED = new Set(['part_of']); // shown by nesting in map mode
+let mapParent = new Map();
+function computeMapParents() {
+  // Primary home of each thing: concept → its strongest part_of; repo → its strongest provides.
+  mapParent = new Map();
+  const best = new Map();
+  for (const c of D.claims) {
+    if (c.status !== 'active' || c.vk !== 'anchor' || !A.has(c.v)) continue;
+    const a = A.get(c.about); if (!a) continue;
+    const ok = (a.kind === 'concept' && c.relation === 'part_of') || (a.kind === 'repo' && c.relation === 'provides');
+    if (!ok) continue;
+    const s = c.confidence ?? 0.9;
+    if (!best.has(a.id) || s > best.get(a.id)) { best.set(a.id, s); mapParent.set(a.id, c.v); }
+  }
+  for (const a of D.anchors) if (a.kind === 'project') mapParent.set(a.id, 'group:projects');
+}
+function impliedEdge(c) { return mode === 'map' && (IMPLIED.has(c.relation) || mapParent.get(c.about) === c.v); }
+function buildGraph() {
   if (typeof cytoscape === 'undefined') {
     document.getElementById('cy').innerHTML = '<div class="empty">Graph library could not load (offline?). The other views still work.</div>';
     return;
   }
+  if (cy) cy.destroy();
   const deg = new Map();
   for (const c of D.claims) if (c.vk === 'anchor' && c.status === 'active' && !['meta', 'topic', 'personal'].includes(c.family)) {
     deg.set(c.about, (deg.get(c.about) || 0) + 1); deg.set(c.v, (deg.get(c.v) || 0) + 1);
   }
   const els = [];
-  for (const a of D.anchors) els.push({ group: 'nodes', data: { id: a.id, label: shortName(a), kind: a.kind, color: kindColor(a.kind), size: 14 + Math.min(46, Math.sqrt(deg.get(a.id) || 0) * 7) } });
+  if (mode === 'map' && !focusOn) els.push({ group: 'nodes', data: { id: 'group:projects', label: 'Your projects', kind: 'group', color: kindColor('project'), size: 20 } });
+  for (const a of D.anchors) {
+    const d = { id: a.id, label: shortName(a), kind: a.kind, color: kindColor(a.kind), size: mode === 'map' ? 16 : 14 + Math.min(46, Math.sqrt(deg.get(a.id) || 0) * 7) };
+    if (mode === 'map' && !focusOn && mapParent.has(a.id)) d.parent = mapParent.get(a.id);
+    els.push({ group: 'nodes', data: d });
+  }
   for (const c of D.claims) if (c.vk === 'anchor' && A.has(c.about) && A.has(c.v))
     els.push({ group: 'edges', data: { id: c.id, source: c.about, target: c.v, color: famColor(c.family), w: 0.8 + 2 * (c.confidence ?? 0.9) }, classes: c.basis === 'inferred' || c.basis === 'intuited' ? 'inf' : '' });
+  const ink = css('--ink'), bg = css('--bg');
   cy = cytoscape({
-    container: document.getElementById('cy'), elements: els, minZoom: 0.08, maxZoom: 3, wheelSensitivity: 0.25,
+    container: document.getElementById('cy'), elements: els, minZoom: 0.05, maxZoom: 4, wheelSensitivity: 0.25,
     style: [
-      { selector: 'node', style: { 'background-color': 'data(color)', width: 'data(size)', height: 'data(size)', label: 'data(label)', 'font-size': 10, color: css('--ink'), 'text-valign': 'bottom', 'text-margin-y': 3, 'text-outline-width': 2, 'text-outline-color': css('--bg'), 'min-zoomed-font-size': 7 } },
+      { selector: 'node', style: { 'background-color': 'data(color)', width: 'data(size)', height: 'data(size)', label: 'data(label)', 'font-size': 14, color: ink, 'text-valign': 'bottom', 'text-margin-y': 3, 'text-outline-width': 2.5, 'text-outline-color': bg, 'min-zoomed-font-size': 6, 'text-wrap': 'ellipsis', 'text-max-width': 110 } },
       { selector: 'node[kind="concept"]', style: { shape: 'round-diamond', 'font-weight': 700, 'font-size': 13, 'min-zoomed-font-size': 4 } },
-      { selector: 'node[kind="project"]', style: { shape: 'round-rectangle', 'font-weight': 700, 'font-size': 16, 'min-zoomed-font-size': 3 } },
-      { selector: 'edge', style: { width: 'data(w)', 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.6, 'curve-style': 'bezier', opacity: 0.45 } },
+      { selector: 'node[kind="project"]', style: { shape: 'round-rectangle', 'font-weight': 700, 'font-size': 14, 'min-zoomed-font-size': 3 } },
+      { selector: ':parent', style: { shape: 'round-rectangle', 'background-color': 'data(color)', 'background-opacity': 0.07, 'border-width': 1.5, 'border-color': 'data(color)', 'border-opacity': 0.55, padding: 14, 'text-valign': 'top', 'text-halign': 'center', 'text-margin-y': -4, 'font-size': 'data(fs)', 'font-weight': 700, color: 'data(color)', 'min-zoomed-font-size': 2, 'text-max-width': 2000 } },
+      { selector: 'edge', style: { width: 'data(w)', 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.7, 'curve-style': 'bezier', opacity: mode === 'network' ? 0.35 : 0.85, label: '' } },
       { selector: 'edge.inf', style: { 'line-style': 'dashed', 'line-dash-pattern': [5, 4] } },
+      { selector: 'edge.named', style: { label: 'data(rel)', 'font-size': 9, color: ink, 'text-rotation': 'autorotate', 'text-outline-width': 2, 'text-outline-color': bg, 'min-zoomed-font-size': 6 } },
       { selector: '.hidden', style: { display: 'none' } },
-      { selector: '.fresh', style: { 'border-width': 3, 'border-color': css('--fresh') } },
+      { selector: 'node.fresh', style: { 'border-width': 3, 'border-color': css('--fresh') } },
       { selector: 'edge.fresh', style: { opacity: 0.95, width: 3 } },
-      { selector: '.faded', style: { opacity: 0.08 } },
+      { selector: '.faded', style: { opacity: 0.12 } },
       { selector: 'node.sel', style: { 'border-width': 4, 'border-color': css('--accent'), 'font-size': 16, 'min-zoomed-font-size': 0 } },
-      { selector: 'node.nb', style: { 'font-size': 14, 'min-zoomed-font-size': 0 } },
+      { selector: 'node.nb', style: { 'min-zoomed-font-size': 0 } },
       { selector: 'edge.hl', style: { opacity: 0.95 } },
     ],
   });
-  cy.on('tap', 'node', e => select(e.target.id()));
+  // label edges with their relation when they are few enough to read
+  cy.edges().forEach(e => { const c = CL.get(e.id()); e.data('rel', c.relation); });
+  cy.nodes(':parent').forEach(n => n.data('fs', n.parent().length ? 24 : 40));
+  cy.on('tap', 'node', e => { if (e.target.id() !== 'group:projects') select(e.target.id()); });
   cy.on('tap', e => { if (e.target === cy) select(null); });
   applyVisibility(); relayout();
+}
+const CL = new Map(D.claims.map(c => [c.id, c]));
+function neighbourhood(id) {
+  const s = new Set([id]);
+  for (const c of cur.byAbout.get(id) || []) if (c.vk === 'anchor' && show.fams.has(c.family)) s.add(c.v);
+  for (const c of cur.byTarget.get(id) || []) if (show.fams.has(c.family)) s.add(c.about);
+  return s;
 }
 function applyVisibility() {
   if (!cy) return;
   const aliveEdge = new Set(cur.active.map(c => c.id));
-  const meta = new Map(D.claims.map(c => [c.id, c]));
+  const hood = focusOn && selected ? neighbourhood(selected) : null;
   cy.batch(() => {
     cy.nodes().forEach(n => {
       const a = A.get(n.id());
-      n.toggleClass('hidden', !(cur.alive.has(a.id) && show.kinds.has(a.kind)));
+      if (!a) { n.toggleClass('hidden', !!hood); return; } // synthetic group box
+      let vis = cur.alive.has(a.id) && show.kinds.has(a.kind);
+      if (hood) vis = cur.alive.has(a.id) && hood.has(a.id);
+      n.toggleClass('hidden', !vis);
       n.toggleClass('fresh', a.introduced === T && T > 0);
     });
+    let shown = 0;
     cy.edges().forEach(e => {
-      const c = meta.get(e.id());
-      const vis = aliveEdge.has(c.id) && show.fams.has(c.family) && show.bases.has(c.basis) && !e.source().hasClass('hidden') && !e.target().hasClass('hidden');
+      const c = CL.get(e.id());
+      let vis = aliveEdge.has(c.id) && show.fams.has(c.family) && show.bases.has(c.basis) && !e.source().hasClass('hidden') && !e.target().hasClass('hidden');
+      if (vis && mode === 'map' && !hood) vis = !!selected && (c.about === selected || c.v === selected) && !impliedEdge(c);
       e.toggleClass('hidden', !vis);
       e.toggleClass('fresh', c.introduced === T && T > 0);
+      if (vis) shown++;
     });
+    cy.edges().toggleClass('named', shown <= 40);
   });
   highlight();
 }
 function relayout() {
   if (!cy) return;
-  cy.elements().not('.hidden').layout({ name: 'cose', animate: false, randomize: true, nodeRepulsion: () => 9000, idealEdgeLength: () => 70, edgeElasticity: () => 80, gravity: 0.3, numIter: 1200, nodeOverlap: 12, componentSpacing: 50, padding: 30 }).run();
+  const fc = HAS_FCOSE();
+  let opts;
+  if (focusOn && selected) {
+    const hood = neighbourhood(selected);
+    opts = { name: 'concentric', animate: false, concentric: n => n.id() === selected ? 2 : 1, levelWidth: () => 1, minNodeSpacing: 110, padding: 60 };
+  } else if (mode === 'map') {
+    const pos = packMap();
+    cy.nodes().not('.hidden').filter(n => n.isChildless()).layout({ name: 'preset', positions: n => pos.get(n.id()) || { x: 0, y: 0 }, animate: false, fit: false }).run();
+    cy.fit(cy.elements().not('.hidden'), 30);
+    return;
+  } else {
+    opts = fc ? { name: 'fcose', quality: 'proof', randomize: true, animate: false, nodeRepulsion: 12000, idealEdgeLength: 110, edgeElasticity: 0.3, gravity: 0.15, nodeSeparation: 120, packComponents: true, padding: 30 }
+              : { name: 'cose', animate: false, randomize: true, nodeRepulsion: () => 12000, idealEdgeLength: () => 110, padding: 30 };
+  }
+  // in map mode edges are hidden while laying out, so boxes pack cleanly
+  const eles = mode === 'map' && !(focusOn && selected) ? cy.nodes().not('.hidden') : cy.elements().not('.hidden');
+  eles.layout(opts).run();
   cy.fit(cy.elements().not('.hidden'), 30);
+  if (cy.zoom() > 1.1) { cy.zoom(1.1); cy.center(cy.elements().not('.hidden')); }
+}
+// Deterministic nested shelf-packing: leaves in tidy rows inside their box, boxes in rows inside
+// their parent box. Returns centre positions for leaves; compound boxes size around them.
+function packMap() {
+  const CELL = { w: 132, h: 58 }, PAD = 18, LABEL = 26, GAP = 22;
+  const vis = cy.nodes().not('.hidden');
+  const kids = new Map(), roots = [];
+  vis.forEach(n => {
+    const p = n.parent().length && !n.parent().hasClass('hidden') ? n.parent().id() : null;
+    if (p) (kids.get(p) || kids.set(p, []).get(p)).push(n.id()); else roots.push(n.id());
+  });
+  const label = id => (cy.getElementById(id).data('label') || '').toLowerCase();
+  const boxes = new Map(); // id -> {w,h,items:[{id,x,y}]} (x,y = offset of child's top-left)
+  function shelf(items, minW) {
+    const area = items.reduce((s, it) => s + it.w * it.h, 0);
+    const maxW = Math.max(minW, ...items.map(i => i.w), Math.sqrt(area) * 1.6);
+    let x = 0, y = 0, rowH = 0, W = 0;
+    for (const it of items) {
+      if (x > 0 && x + it.w > maxW) { y += rowH + GAP; x = 0; rowH = 0; }
+      it.x = x; it.y = y; x += it.w + GAP; rowH = Math.max(rowH, it.h); W = Math.max(W, x - GAP);
+    }
+    return { w: W, h: y + rowH };
+  }
+  function measure(id, depth = 0) {
+    const ch = kids.get(id);
+    if (!ch) return { id, w: CELL.w, h: CELL.h, leaf: true };
+    const items = ch.map(c => measure(c, depth + 1));
+    // boxes first (largest first), then single things alphabetically
+    items.sort((a, b) => (a.leaf - b.leaf) || (a.leaf ? label(a.id).localeCompare(label(b.id)) : b.w * b.h - a.w * a.h));
+    const inner = shelf(items, CELL.w * 3);
+    const fs = depth ? 24 : 40, titleW = (cy.getElementById(id).data("label") || "").length * fs * 0.6 + 24;
+    const box = { id, w: Math.max(inner.w + PAD * 2, titleW), h: inner.h + PAD * 2 + LABEL + (depth ? 0 : 24), off: PAD + LABEL + (depth ? 0 : 24), items };
+    boxes.set(id, box);
+    return box;
+  }
+  const top = roots.map(r => measure(r, 0));
+  top.sort((a, b) => (a.leaf - b.leaf) || b.w * b.h - a.w * a.h);
+  shelf(top, 2200);
+  const pos = new Map();
+  function place(it, ox, oy) {
+    if (it.leaf) { pos.set(it.id, { x: ox + it.x + CELL.w / 2, y: oy + it.y + CELL.h / 2 }); return; }
+    const b = boxes.get(it.id);
+    for (const c of b.items) place(c, ox + it.x + PAD, oy + it.y + b.off);
+  }
+  for (const it of top) place(it, 0, 0);
+  return pos;
 }
 function highlight() {
   if (!cy) return;
   cy.elements().removeClass('faded sel hl nb');
   if (!selected || !cy.getElementById(selected).length) return;
   const n = cy.getElementById(selected);
-  const hood = n.closedNeighborhood().not('.hidden');
-  cy.elements().not('.hidden').not(hood).addClass('faded');
-  hood.nodes().addClass('nb');
+  if (!(focusOn)) {
+    const hood = n.closedNeighborhood().not('.hidden');
+    const keep = hood.union(hood.ancestors());
+    cy.elements().not('.hidden').not(keep).not(':parent').addClass('faded');
+    hood.nodes().addClass('nb');
+  }
   n.addClass('sel'); n.connectedEdges().addClass('hl');
 }
-
+function graphToolbar() {
+  const bar = document.createElement('div');
+  bar.id = 'gbar';
+  bar.innerHTML = `<button data-m="map">Map</button><button data-m="network">Network</button><button data-f="1" title="Show only the selection and its neighbours">Focus</button><button data-fit="1" title="Fit to screen">Fit</button>`;
+  document.getElementById('v-graph').appendChild(bar);
+  const sync = () => bar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.m === mode || (!!b.dataset.f && focusOn)));
+  bar.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.m && b.dataset.m !== mode) { mode = b.dataset.m; buildGraph(); }
+    else if (b.dataset.f) { focusOn = !focusOn; buildGraph(); }
+    else if (b.dataset.fit && cy) cy.fit(cy.elements().not('.hidden'), 30);
+    sync();
+  });
+  sync();
+}
 // ---- clusters view ----
 function renderClusters() {
   const el = document.getElementById('v-clusters');
@@ -390,7 +523,11 @@ function renderDetail() {
 }
 
 // ---- selection, views, time ----
-function select(id) { selected = id; highlight(); renderDetail(); if (id && cy && view === 'graph') { const n = cy.getElementById(id); if (n.length && !n.hasClass('hidden')) cy.animate({ center: { eles: n }, duration: 250 }); } }
+function select(id) {
+  selected = id; applyVisibility(); renderDetail();
+  if (focusOn) { relayout(); return; }
+  if (id && cy && view === 'graph') { const n = cy.getElementById(id); if (n.length && !n.hasClass('hidden')) cy.animate({ center: { eles: n }, duration: 250 }); }
+}
 function renderView() { if (view === 'clusters') renderClusters(); else if (view === 'comp') renderComp(); else if (view === 'hist') renderHist(); }
 function setView(v) {
   view = v;
@@ -437,7 +574,7 @@ try { const th = localStorage.getItem('mneme-theme'); if (th) document.documentE
 
 document.getElementById('hinfo').textContent = ` · ${D.meta.branch} · ${N} commits · ${D.anchors.length} anchors · ${D.claims.length} claims`;
 document.getElementById('t').max = Math.max(0, N - 1);
-computeState(); renderFilters(); initGraph(); setT(N - 1);
+computeState(); renderFilters(); computeMapParents(); graphToolbar(); buildGraph(); setT(N - 1);
 })();
 </script>
 </body>

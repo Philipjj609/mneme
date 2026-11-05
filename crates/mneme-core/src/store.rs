@@ -168,6 +168,14 @@ impl Repo {
         self.save_refs(&refs)
     }
 
+    /// Usage log: what was recalled for which question, and later whether it helped.
+    /// Operational record (not memory content); the learning loop reads it.
+    pub fn append_episode(&self, record: &serde_json::Value) -> Result<()> {
+        let mut f = OpenOptions::new().append(true).create(true).open(self.mem().join("episodes.jsonl"))?;
+        writeln!(f, "{}", serde_json::to_string(record)?)?;
+        Ok(())
+    }
+
     pub fn save_source_payload(&self, id: &str, ext: &str, content: &[u8]) -> Result<PathBuf> {
         let path = self.mem().join("sources").join(format!("{id}.{ext}"));
         if !path.exists() {

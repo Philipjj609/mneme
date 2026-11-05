@@ -144,6 +144,13 @@ fn parse_claim(sim: &State, p: &Proposal, raw: &J) -> Result<Claim> {
                 c.scope = sc.into();
             }
             c.valid_from = o.get("valid_from").and_then(|x| x.as_str()).map(String::from);
+            // Explicit evidence: source ids, each an independent group.
+            for s in o.get("evidence").and_then(|x| x.as_array()).into_iter().flatten().filter_map(|x| x.as_str()) {
+                if !sim.sources.contains_key(s) {
+                    bail!("unknown evidence source '{s}'");
+                }
+                c = c.with_evidence(s);
+            }
             c
         }
         _ => bail!("claim must be an array or object"),
