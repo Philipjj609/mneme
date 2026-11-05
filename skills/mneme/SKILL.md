@@ -7,7 +7,7 @@ description: Use the mneme memory before researching or deciding anything about 
 
 mneme is a CLI over a versioned claim log. Every fact carries a basis (observed / stated / inferred), evidence, and time. Ask it before you search the web, and write back what you learn.
 
-Find the binary: `mneme` on PATH, or `target/release/mneme` in the mneme repo. Run commands from inside the mneme repo, or pass `--root <path-to-mneme>`.
+Find the binary: `mneme` on PATH, or `target/release/mneme` in the mneme engine repo. It finds the memory via `--root <dir>`, `$MNEME_ROOT`, or by searching upward from the current folder (a memory is a folder with `memory/refs.json`; Philip's is the private `mneme-memory` repo).
 
 ## Read (cheapest first)
 

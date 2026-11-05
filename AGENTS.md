@@ -5,7 +5,7 @@
 **Changing the code:**
 - `crates/mneme-core` covers model, log/refs, state replay, frames, digest validation, recall, projections, and the viewer (`src/viewer.html`, embedded at build time).
 - `crates/mneme-cli` is the `mneme` command plus capture adapters (`capture.rs` for GitHub, `links.rs` for web/X/HF).
-- Build with `cargo build --release`, then check with `mneme build` and open `projections/view.html`.
+- Build with `cargo build --release`. Test against a memory with `--root` or `$MNEME_ROOT` (Philip's: `../mneme-memory`). Never create or commit a memory inside this repo.
 
 **Invariants. Do not break these:**
 1. `memory/log.jsonl` is append-only. Never edit or rewrite it. Fix mistakes with `retract` or a superseding claim.

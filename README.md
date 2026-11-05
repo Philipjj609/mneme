@@ -10,7 +10,7 @@ Most "AI memory" is one of three things: a folder of markdown notes, a vector da
 - **Every format is a view.** Graph, nested map, clusters, comprehension grid, history timeline and markdown wiki pages are all compiled from the log and rebuilt whenever you like.
 - **Cheap for AI.** Agents ask through `recall`: a budgeted briefing with *why* each item is included and what is *not* known, or a one-line-per-item `--brief` view at ~25 tokens per item. Every recall is logged and can be rated, which is the signal for recall that learns.
 
-> Status: early but working (Nov 2026). The author's own memory ships in this repo as the live example: 840+ things and 2,600+ claims from saved GitHub stars, web tools, X posts and articles. Design: [docs/DESIGN.md](docs/DESIGN.md) · Plan: [docs/PLAN.md](docs/PLAN.md).
+> Status: early but working (Nov 2026). The author runs it on a personal memory of 840+ things and 2,600+ claims (GitHub stars, web tools, X posts and articles), kept in a separate private repo: this repo is the engine only. Design: [docs/DESIGN.md](docs/DESIGN.md) · Plan: [docs/PLAN.md](docs/PLAN.md).
 
 ---
 
@@ -20,23 +20,24 @@ Requires [Rust](https://rustup.rs) (stable). Works on Windows, macOS and Linux.
 
 ```bash
 git clone https://github.com/Philipjj609/mneme
-cd mneme
-cargo build --release              # binary: target/release/mneme (mneme.exe on Windows)
-./target/release/mneme status      # the bundled example memory
-./target/release/mneme recall "how do I make a website that doesn't look generic" --brief
-./target/release/mneme build       # writes projections/view.html
-python -m http.server 4173 --directory projections   # open http://localhost:4173/view.html
+cd mneme && cargo build --release            # binary: target/release/mneme (mneme.exe on Windows)
 ```
 
 ### Start your own memory
 
+A memory is just a folder (keep it in its own git repo, private if it's personal):
+
 ```bash
 mkdir my-memory && cd my-memory
-mneme init                                   # creates memory/ (copy frames/ from this repo too)
+mneme init                                   # memory/ + default comprehension frames/
 mneme capture github-stars --user <you>      # your starred repos, as observed facts
 mneme capture links saved.txt                # any links: web pages, X posts, GitHub, Hugging Face
-mneme build
+mneme recall "what do I have for agent memory?" --brief
+mneme build                                  # projections/view.html
+python -m http.server 4173 --directory projections   # open http://localhost:4173/view.html
 ```
+
+mneme finds the memory via `--root <dir>`, else `$MNEME_ROOT`, else by searching upward from the current folder. So you can run it from anywhere with `export MNEME_ROOT=~/my-memory`.
 
 `saved.txt` takes one URL per line, with an optional note after it. `# from <url>` heads a group of links that came from that post:
 
@@ -127,6 +128,8 @@ Click anything to see what's known about it, the evidence, what's unknown, and i
 
 ## Layout
 
+A memory folder:
+
 ```
 memory/log.jsonl      the memory — one commit per line (append-only)
 memory/refs.json      branches + HEAD
@@ -137,9 +140,16 @@ memory/episodes.jsonl recall + feedback log
 frames/               comprehension frames per kind of thing
 proposals/            digest proposals (interpretations)
 inbox/                link lists as they were pasted
-skills/mneme/         agent skill
+```
+
+This repo (the engine):
+
+```
 crates/mneme-core     model, log, replay, frames, digest, recall, projections, viewer
 crates/mneme-cli      the `mneme` command and capture adapters
+frames/               default frames (written by `mneme init`)
+skills/mneme/         agent skill
+docs/                 design, plan, digest protocol, tracking
 ```
 
 ## Honest limits

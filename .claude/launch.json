@@ -4,7 +4,7 @@
     {
       "name": "mneme-view",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "4173", "--bind", "127.0.0.1", "--directory", "projections"],
+      "runtimeArgs": ["-m", "http.server", "4173", "--bind", "127.0.0.1", "--directory", "../mneme-memory/projections"],
       "port": 4173
     }
   ]

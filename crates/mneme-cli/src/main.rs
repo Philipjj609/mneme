@@ -138,7 +138,10 @@ fn main() -> Result<()> {
         println!("initialized mneme memory in {}", root.join("memory").display());
         return Ok(());
     }
-    let repo = Repo::discover(cli.root.as_deref().unwrap_or(&cwd))?;
+    // Where the memory lives: --root, else $MNEME_ROOT, else search upward from here.
+    // Keeping the memory in its own (private) repo and the engine in another is the normal setup.
+    let start = cli.root.clone().or_else(|| std::env::var_os("MNEME_ROOT").map(PathBuf::from)).unwrap_or(cwd);
+    let repo = Repo::discover(&start)?;
 
     match cli.cmd {
         Cmd::Init => unreachable!(),

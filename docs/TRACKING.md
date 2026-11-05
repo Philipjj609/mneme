@@ -1,5 +1,7 @@
 # How everything is tracked
 
+Paths below (`memory/`, `proposals/`, `inbox/`) are inside the **memory folder**, which is its own repo (Philip's is the private `mneme-memory`), not inside this engine repo.
+
 One home for each kind of thing. If you can't tell where something goes, it probably belongs in the memory as a claim.
 
 | What | Where | How it gets there |

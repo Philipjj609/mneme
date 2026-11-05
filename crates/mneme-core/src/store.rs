@@ -15,6 +15,17 @@ use crate::model::*;
 use crate::state::State;
 use crate::util::now_rfc3339;
 
+/// Frames written by `init`, embedded from the repo's `frames/` at build time.
+pub const DEFAULT_FRAMES: &[(&str, &str)] = &[
+    ("account.json", include_str!("../../../frames/account.json")),
+    ("concept.json", include_str!("../../../frames/concept.json")),
+    ("dataset.json", include_str!("../../../frames/dataset.json")),
+    ("post.json", include_str!("../../../frames/post.json")),
+    ("project.json", include_str!("../../../frames/project.json")),
+    ("repo.json", include_str!("../../../frames/repo.json")),
+    ("site.json", include_str!("../../../frames/site.json")),
+];
+
 pub struct Repo {
     pub root: PathBuf,
 }
@@ -28,6 +39,13 @@ impl Repo {
         }
         if !repo.log_path().exists() {
             fs::write(repo.log_path(), "")?;
+        }
+        // A new memory starts with the default comprehension frames; edit them freely afterwards.
+        if !repo.frames_dir().exists() {
+            fs::create_dir_all(repo.frames_dir())?;
+            for (name, body) in DEFAULT_FRAMES {
+                fs::write(repo.frames_dir().join(name), body)?;
+            }
         }
         Ok(repo)
     }

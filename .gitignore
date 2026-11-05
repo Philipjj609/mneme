@@ -1,5 +1,7 @@
 target/
 projections/
 .claude/settings.local.json
-# captured evidence stays local: it contains full copies of third-party pages and articles
-memory/sources/
+# memories live in their own repo (see README); never commit one here
+memory/
+proposals/
+inbox/

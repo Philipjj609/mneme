@@ -201,7 +201,10 @@ pub fn recall(state: &State, query: &str, max_items: usize) -> RecallResult {
                 e.0 += gain;
             }
         }
-        for (k, (g, _, reason)) in add {
+        for (k, (total, best, reason)) in add {
+            // Strongest path counts fully, further paths with diminishing weight:
+            // a hub with 40 weak incoming links must not outrank an exact match.
+            let g = best + 0.3 * (total - best).sqrt();
             let entry = act.entry(k.clone()).or_insert(0.0);
             if *entry == 0.0 {
                 why.insert(k.clone(), reason);
