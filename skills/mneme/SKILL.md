@@ -24,11 +24,11 @@ Rules:
 
 - Links → `mneme capture links <file>`: one URL per line plus an optional note. It handles web pages, X posts (including X articles), GitHub repos (+README) and Hugging Face datasets.
 - An organ's output (organon-protocol JSONL, e.g. `organon-video see <url>` → `messages.jsonl`) → `mneme ingest <file>`. Sources, anchors and observed facts are committed; observations go to `memory/observations/` so proposals can cite them as evidence (`"evidence": ["o_…"]`): cite the moment a claim is said or the keyframe that shows it.
-- Interpretation → write a proposal JSON and run `mneme digest <file>`. Follow `docs/DIGEST.md`: state before inferring, place each item on every axis (what / stage / access / peers / fit), extract a post's lesson, leave unknowns empty.
+- Interpretation → write a proposal JSON, check it with `organon audit <file> [--messages <organ output>]` if organon is installed (confident inferences need evidence, and no model may verify its own work), then run `mneme digest <file>`. Follow `docs/DIGEST.md`: state before inferring, place each item on every axis (what / stage / access / peers / fit), extract a post's lesson, leave unknowns empty.
 - Mistakes → `mneme retract <claim-id> --reason "…"`. History is kept.
 - After writing: `mneme build` refreshes the views, then commit `memory/` and `proposals/` with git.
 - At the end of a session: `organon-learning report` (recall measured against rated and used questions, frame slots to add, duplicates, what to verify). Act on it, and rate the recalls you used: that is what recall learns from.
 
 ## Cost discipline
 
-Use brief recall before full recall, and full recall before reading sources. Batch digests per group of items. Deep-read a source only when it is central or the frontier asks for it (`mneme frontier`).
+If organon is installed, `organon brief` at the start of a session shows what the session costs and how much context each turn re-reads, and `organon task new … --effort lookup|compare|deep` sets a budget before the work (see organon's `skills/organon/SKILL.md`). Use brief recall before full recall, and full recall before reading sources. Batch digests per group of items. Deep-read a source only when it is central or the frontier asks for it (`mneme frontier`).
