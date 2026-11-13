@@ -32,6 +32,7 @@ mkdir my-memory && cd my-memory
 mneme init                                   # memory/ + default comprehension frames/
 mneme capture github-stars --user <you>      # your starred repos, as observed facts
 mneme capture links saved.txt                # any links: web pages, X posts, GitHub, Hugging Face
+mneme ingest ~/.organon/video/<id>/messages.jsonl   # what an organ perceived (e.g. organon-video)
 mneme recall "what do I have for agent memory?" --brief
 mneme build                                  # projections/view.html
 python -m http.server 4173 --directory projections   # open http://localhost:4173/view.html

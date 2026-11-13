@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use mneme_core::frames::{coverage, profile};
-use mneme_core::model::{ClaimId, Op, Source, SourceId, Status};
+use mneme_core::model::{ClaimId, Message, Op, Source, SourceId, Status};
 use mneme_core::project::{write_all, BuildInfo};
 use mneme_core::recall::{recall, render, render_brief};
 use mneme_core::util::now_rfc3339;
@@ -57,8 +57,44 @@ pub fn digest(repo: &Repo, file: &Path) -> anyhow::Result<()> {
         meta: Default::default(),
         produced_by: None,
     };
-    let ops = mneme_core::digest::ops_from_proposal(&state, &proposal, archive)?;
+    let observations = repo.observation_ids()?;
+    let ops = mneme_core::digest::ops_from_proposal(&state, &proposal, archive, &observations)?;
     commit(repo, &proposal.author, &proposal.message, ops)
+}
+
+/// Ingest an organ's output: organon-protocol messages, one JSON object per line.
+pub fn ingest(repo: &Repo, file: &Path, author: Option<&str>) -> anyhow::Result<()> {
+    let text =
+        std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+    let mut messages = Vec::new();
+    for (i, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let m: Message = serde_json::from_str(line)
+            .with_context(|| format!("{} line {}", file.display(), i + 1))?;
+        messages.push(m);
+    }
+    let count = messages.len();
+    let organ = messages.iter().find_map(|m| match m {
+        Message::Source(s) => s.produced_by.as_ref().map(|p| p.organ.clone()),
+        _ => None,
+    });
+    let (_, state) = repo.state_at(None)?;
+    let known = repo.observation_ids()?;
+    let out = mneme_core::ingest::ops_from_messages(&state, messages, &known)?;
+    let added = repo.save_observations(&out.observations)?;
+    println!("{count} messages, {added} new observations");
+    if out.ops.is_empty() {
+        println!("no new sources, anchors or claims");
+        return Ok(());
+    }
+    let author = author
+        .map(str::to_owned)
+        .or(organ)
+        .unwrap_or_else(|| "ingest".into());
+    let name = file.file_name().unwrap_or_default().to_string_lossy();
+    commit(repo, &author, &format!("ingest {name}"), out.ops)
 }
 
 pub fn retract(repo: &Repo, claims: &[String], reason: &str, author: &str) -> anyhow::Result<()> {

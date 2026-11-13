@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 mneme-core = { path = "../mneme-core" }
-organon-protocol = { git = "https://github.com/Philipjj609/organon-protocol", tag = "v0.1.0" }
+organon-protocol = { git = "https://github.com/Philipjj609/organon-protocol", tag = "v0.1.2" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }

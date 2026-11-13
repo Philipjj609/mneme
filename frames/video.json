@@ -1,0 +1,15 @@
+{
+  "kind": "video",
+  "label": "Video",
+  "slots": [
+    { "id": "source", "label": "Source", "relations": ["title", "channel", "duration", "homepage", "has_captions"], "hint": "observed by organon-video" },
+    { "id": "speaker", "label": "Speaker", "relations": ["speaker"], "hint": "who talks (a person anchor)" },
+    { "id": "gist", "label": "Gist", "relations": ["described_as"], "hint": "one sentence: what it is about" },
+    { "id": "claims", "label": "Claims", "relations": ["claims"], "hint": "what it asserts, each citing the moment (o_…) it is said" },
+    { "id": "shows", "label": "Shows", "relations": ["shows"], "hint": "what the pictures carry that speech does not: code, diagrams; cite the keyframe observation" },
+    { "id": "teaches", "label": "Lesson", "relations": ["teaches"], "hint": "the transferable takeaway, as a concept link" },
+    { "id": "concepts", "label": "Concepts", "relations": ["mentions", "instance_of"], "hint": "concepts and tools it explains" },
+    { "id": "fit", "label": "Fit for our projects", "relations": ["relevant_to"], "hint": "why it matters to us" },
+    { "id": "limits", "label": "Caveats", "relations": ["limitation"], "hint": "what is dated, simplified, or contested" }
+  ]
+}

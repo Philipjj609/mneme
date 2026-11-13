@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 pub use organon_protocol::{
-    Anchor, AnchorId, Basis, Claim, ClaimBody, ClaimId, CommitId, EvidenceRef, Family, Relation,
-    Scope, Source, SourceId, Stance, Status, Subject, Value,
+    Anchor, AnchorId, Basis, Claim, ClaimBody, ClaimId, CommitId, EvidenceRef, Family, Message,
+    Observation, ObservationId, Relation, Scope, Source, SourceId, Stance, Status, Subject, Value,
 };
 
 /// One change to the memory. A commit is an ordered list of ops.

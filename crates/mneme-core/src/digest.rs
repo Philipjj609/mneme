@@ -1,8 +1,11 @@
 //! Digest: turn a protocol [`Proposal`] into ops. Validates every subject, resolves string
 //! values to links when they name a known anchor (and rejects id-like strings that name
-//! nothing), attaches evidence, and archives the proposal itself as a source.
+//! nothing), attaches evidence (sources `s_…` or stored observations `o_…`), and archives the
+//! proposal itself as a source.
 
-use organon_protocol::{AnchorId, Proposal, ProposedClaim};
+use std::collections::HashSet;
+
+use organon_protocol::{AnchorId, ObservationId, Proposal, ProposedClaim};
 use serde_json::{Map, Value as J};
 
 use crate::error::{Error, Result};
@@ -11,11 +14,17 @@ use crate::model::{
 };
 use crate::state::{Batch, State};
 
-/// Ops for `proposal` against `state`. `archive` is the source recording the proposal text.
+/// Ops for `proposal` against `state`. `archive` is the source recording the proposal text;
+/// `observations` are the stored observation ids a claim may cite.
 ///
 /// # Errors
 /// [`Error::Rejected`] listing every invalid claim (nothing is committed then).
-pub fn ops_from_proposal(state: &State, proposal: &Proposal, archive: Source) -> Result<Vec<Op>> {
+pub fn ops_from_proposal(
+    state: &State,
+    proposal: &Proposal,
+    archive: Source,
+    observations: &HashSet<ObservationId>,
+) -> Result<Vec<Op>> {
     let mut batch = Batch::new(state);
     let archive_id = archive.id.clone();
     batch.add_source(archive);
@@ -27,7 +36,7 @@ pub fn ops_from_proposal(state: &State, proposal: &Proposal, archive: Source) ->
 
     let mut errors = Vec::new();
     for (i, raw) in proposal.claims.iter().enumerate() {
-        match parse_claim(&batch, proposal, raw) {
+        match parse_claim(&batch, observations, proposal, raw) {
             Ok(mut body) => {
                 if proposal.evidence.is_some() && body.evidence.is_empty() {
                     attach_auto_evidence(&batch, &mut body);
@@ -104,6 +113,7 @@ fn as_string(v: Option<&J>, what: &str) -> std::result::Result<String, String> {
 
 fn parse_claim(
     batch: &Batch,
+    observations: &HashSet<ObservationId>,
     p: &Proposal,
     raw: &ProposedClaim,
 ) -> std::result::Result<ClaimBody, String> {
@@ -123,7 +133,7 @@ fn parse_claim(
             body.rationale = items.get(4).and_then(J::as_str).map(str::to_owned);
             body
         }
-        ProposedClaim::Full(o) => parse_full(batch, p, o)?,
+        ProposedClaim::Full(o) => parse_full(batch, observations, p, o)?,
     };
     if body.scope.is_world() && !p.scope.is_world() {
         body.scope = p.scope.clone();
@@ -140,6 +150,7 @@ fn parse_claim(
 
 fn parse_full(
     batch: &Batch,
+    observations: &HashSet<ObservationId>,
     p: &Proposal,
     o: &Map<String, J>,
 ) -> std::result::Result<ClaimBody, String> {
@@ -168,11 +179,22 @@ fn parse_full(
         .flatten()
         .filter_map(J::as_str)
     {
-        let id: SourceId = s.parse().map_err(|e| format!("evidence: {e}"))?;
-        if !batch.has_source(&id) {
-            return Err(format!("unknown evidence source '{s}'"));
+        if s.starts_with("o_") {
+            let id: ObservationId = s.parse().map_err(|e| format!("evidence: {e}"))?;
+            if !observations.contains(&id) {
+                return Err(format!(
+                    "unknown evidence observation '{s}' (ingest the organ's output first)"
+                ));
+            }
+            body.evidence
+                .push(vec![EvidenceRef::Observation { observation: id }]);
+        } else {
+            let id: SourceId = s.parse().map_err(|e| format!("evidence: {e}"))?;
+            if !batch.has_source(&id) {
+                return Err(format!("unknown evidence source '{s}'"));
+            }
+            body = body.with_evidence(id);
         }
-        body = body.with_evidence(id);
     }
     Ok(body)
 }

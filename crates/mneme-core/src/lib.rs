@@ -13,6 +13,7 @@
 pub mod digest;
 pub mod error;
 pub mod frames;
+pub mod ingest;
 pub mod model;
 pub mod project;
 pub mod recall;

@@ -36,6 +36,14 @@ enum Cmd {
     },
     /// Commit a digest proposal (JSON) as claims
     Digest { file: PathBuf },
+    /// Ingest an organ's output (organon-protocol messages, JSONL): sources, anchors,
+    /// observed claims, observations. Interpretation still goes through `digest`.
+    Ingest {
+        file: PathBuf,
+        /// Commit author (default: the organ named in the stream's source)
+        #[arg(long)]
+        author: Option<String>,
+    },
     /// Retract claims that were wrong (kept in history, no longer active)
     Retract {
         claims: Vec<String>,
@@ -158,6 +166,7 @@ fn main() -> anyhow::Result<()> {
             what: Capture::Readme { repos },
         } => commands::capture_readmes(&repo, &repos),
         Cmd::Digest { file } => commands::digest(&repo, &file),
+        Cmd::Ingest { file, author } => commands::ingest(&repo, &file, author.as_deref()),
         Cmd::Retract {
             claims,
             reason,

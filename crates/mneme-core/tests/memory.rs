@@ -340,7 +340,12 @@ fn seeded() -> (tempfile::TempDir, Repo, Source) {
 }
 
 fn digest_ops(repo: &Repo, p: serde_json::Value) -> Result<Vec<Op>, Error> {
-    digest::ops_from_proposal(&state(repo), &proposal(p), source("proposal"))
+    digest::ops_from_proposal(
+        &state(repo),
+        &proposal(p),
+        source("proposal"),
+        &repo.observation_ids().unwrap(),
+    )
 }
 
 #[test]
@@ -602,4 +607,188 @@ fn projections_build_and_escape_script_endings() {
     );
     assert!(html.contains("evil <\\/script>"));
     assert!(out.join("wiki/concept/c.md").exists() && out.join("wiki/index.md").exists());
+}
+
+fn video_messages() -> (
+    Source,
+    organon_protocol::Observation,
+    Vec<organon_protocol::Message>,
+) {
+    use organon_protocol::{Location, Message, Observation, ObservationKind, ProducedBy};
+    let src = source("video");
+    let said = Observation::new(
+        src.id.clone(),
+        ObservationKind::new(ObservationKind::TRANSCRIPT_SEGMENT),
+        Location::Time { t0: 3.0, t1: 9.0 },
+        serde_json::json!({"text": "depend on abstractions"}),
+        ProducedBy {
+            organ: "organon-video".into(),
+            version: "0".into(),
+            tool: None,
+            model: None,
+        },
+    );
+    let Op::AddAnchor { anchor: a } = anchor("video:yt/x", "A talk") else {
+        unreachable!()
+    };
+    let messages = vec![
+        Message::Observation(said.clone()), // order does not matter: sources are taken first
+        Message::Source(src.clone()),
+        Message::Anchor(a),
+        Message::Claim(claim(
+            "video:yt/x",
+            "title",
+            Value::Text("A talk".into()),
+            Basis::Observed,
+            &src,
+        )),
+    ];
+    (src, said, messages)
+}
+
+#[test]
+fn ingest_takes_sources_anchors_observed_claims_and_observations() {
+    let (_d, repo) = repo();
+    let (_, said, messages) = video_messages();
+    let out = mneme_core::ingest::ops_from_messages(&state(&repo), messages, &Default::default())
+        .unwrap();
+    assert_eq!(out.ops.len(), 3, "source, anchor, claim");
+    assert_eq!(out.observations, std::slice::from_ref(&said));
+    repo.commit("organon-video", "ingest", out.ops).unwrap();
+    assert_eq!(repo.save_observations(&out.observations).unwrap(), 1);
+    assert_eq!(
+        repo.save_observations(&out.observations).unwrap(),
+        0,
+        "stored once"
+    );
+    assert!(repo.observation_ids().unwrap().contains(&said.id));
+}
+
+#[test]
+fn ingest_rejects_inferences_tampered_ids_and_dangling_evidence() {
+    use organon_protocol::{EvidenceRef, Message, ObservationId};
+    let (_d, repo) = repo();
+    let (src, mut said, mut messages) = video_messages();
+    // An inference: must go through digest.
+    messages.push(Message::Claim(claim(
+        "video:yt/x",
+        "teaches",
+        link("video:yt/x"),
+        Basis::Inferred,
+        &src,
+    )));
+    // A claim whose content was edited after its id was computed.
+    let mut tampered = claim(
+        "video:yt/x",
+        "duration",
+        Value::Number(10.0),
+        Basis::Observed,
+        &src,
+    );
+    tampered.body.value = Value::Number(11.0);
+    messages.push(Message::Claim(tampered));
+    // Evidence pointing at an observation nobody has.
+    let mut body = Claim::draft(
+        id("video:yt/x"),
+        "channel",
+        Value::Text("c".into()),
+        Basis::Observed,
+        "t",
+    );
+    body.evidence.push(vec![EvidenceRef::Observation {
+        observation: ObservationId::of(b"nothing"),
+    }]);
+    messages.push(Message::Claim(body.finalize()));
+    // An observation edited after its id was computed.
+    said.value = serde_json::json!({"text": "edited"});
+    messages.push(Message::Observation(said));
+    let Err(Error::Rejected(errors)) =
+        mneme_core::ingest::ops_from_messages(&state(&repo), messages, &Default::default())
+    else {
+        panic!("should reject")
+    };
+    let all = errors.join("\n");
+    assert_eq!(errors.len(), 4, "{all}");
+    assert!(
+        all.contains("interpretation")
+            && all.contains("id does not match")
+            && all.contains("unknown evidence observation"),
+        "{all}"
+    );
+}
+
+#[test]
+fn digest_cites_stored_observations_and_rejects_unknown_ones() {
+    let (_d, repo) = repo();
+    let (_, said, messages) = video_messages();
+    let out = mneme_core::ingest::ops_from_messages(&state(&repo), messages, &Default::default())
+        .unwrap();
+    repo.commit("organon-video", "ingest", out.ops).unwrap();
+    repo.save_observations(&out.observations).unwrap();
+    let cite = |evidence: &str| {
+        digest_ops(
+            &repo,
+            serde_json::json!({
+                "author": "model", "message": "m", "basis": "inferred",
+                "claims": [{"about": "video:yt/x", "relation": "described_as", "value": "a talk on dependencies",
+                            "evidence": [evidence], "confidence": 0.8}]
+            }),
+        )
+    };
+    let ops = cite(said.id.as_str()).unwrap();
+    let cited = ops.iter().any(|op| matches!(op, Op::AddClaim { claim }
+        if claim.evidence.iter().flatten().any(|e| matches!(e, organon_protocol::EvidenceRef::Observation { observation } if *observation == said.id))));
+    assert!(cited, "{ops:?}");
+    assert!(matches!(
+        cite("o_00000000000000ff"),
+        Err(Error::Rejected(_))
+    ));
+}
+
+/// Regression: videos were missing from the closed list of result kinds, so a video titled
+/// "Dependency Inversion" never came back for "dependency inversion" (found on the first one).
+#[test]
+fn recall_returns_videos() {
+    let (_d, repo) = repo();
+    let s = source("s");
+    repo.commit(
+        "t",
+        "seed",
+        vec![
+            Op::AddSource { source: s.clone() },
+            anchor("video:yt/x", "SOLID - Dependency Inversion"),
+            Op::AddClaim {
+                claim: claim(
+                    "video:yt/x",
+                    "title",
+                    Value::Text("SOLID - Dependency Inversion".into()),
+                    Basis::Observed,
+                    &s,
+                ),
+            },
+            Op::AddClaim {
+                claim: claim(
+                    "video:yt/x",
+                    "described_as",
+                    Value::Text("a talk on inverting dependencies".into()),
+                    Basis::Inferred,
+                    &s,
+                ),
+            },
+        ],
+    )
+    .unwrap();
+    let r = recall::recall(&state(&repo), "dependency inversion", 5);
+    assert!(
+        r.items.iter().any(|i| i.id.as_str() == "video:yt/x"),
+        "{:?}",
+        r.items
+    );
+    // Organs create anchors without summaries: the brief falls back to the gist claim.
+    let frames = Frames::load(&repo.frames_dir()).unwrap();
+    let brief = recall::render_brief(&state(&repo), &frames, &r, "head").markdown;
+    assert!(
+        brief.contains("a talk on inverting dependencies"),
+        "{brief}"
+    );
 }

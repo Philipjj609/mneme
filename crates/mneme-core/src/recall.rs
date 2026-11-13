@@ -94,7 +94,7 @@ const STOP: &[&str] = &[
 
 /// Kinds that can be recall results (topics, owners and people only carry activation).
 const RESULT_KINDS: &[&str] = &[
-    "concept", "repo", "project", "site", "post", "dataset", "stage",
+    "concept", "repo", "project", "site", "post", "video", "dataset", "stage",
 ];
 
 /// Normalized search terms: lowercase words, stop words removed, light stemming.
@@ -121,7 +121,7 @@ fn kind_weight(kind: &str) -> f32 {
         "concept" => 1.5,
         "project" | "stage" => 1.2,
         "repo" | "site" => 1.0,
-        "dataset" => 0.9,
+        "dataset" | "video" => 0.9,
         "post" => 0.8,
         "topic" => 0.7,
         "account" => 0.4,
@@ -512,9 +512,20 @@ pub fn render_brief(state: &State, frames: &Frames, result: &RecallResult, head:
             .filter(|f| f.is_empty())
             .map(|f| f.slot.id.as_str())
             .collect();
+        // The anchor's summary, else its gist claim (organs create anchors without summaries).
+        let gist = || {
+            state
+                .about(item.id.as_str())
+                .find(|c| c.claim.relation.as_str() == "described_as")
+                .and_then(|c| match &c.claim.value {
+                    Value::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+        };
         let summary: String = anchor
             .summary
             .as_deref()
+            .or_else(gist)
             .unwrap_or("")
             .chars()
             .take(90)

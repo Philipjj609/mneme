@@ -690,8 +690,8 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "organon-protocol"
-version = "0.1.0"
-source = "git+https://github.com/Philipjj609/organon-protocol?tag=v0.1.0#762826c7a13bd449793ea212299ea73217ed924e"
+version = "0.1.2"
+source = "git+https://github.com/Philipjj609/organon-protocol?tag=v0.1.2#ef549b9688edbcb3827df0715cabf980babacd22"
 dependencies = [
  "serde",
  "serde_json",

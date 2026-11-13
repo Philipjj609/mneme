@@ -4,17 +4,19 @@
 //! memory/log.jsonl       one commit per line: the authoritative memory (append-only)
 //! memory/refs.json       branches and HEAD
 //! memory/sources/<id>.*  captured evidence (local; may hold third-party content)
+//! memory/observations/<source>.jsonl  what organs perceived in a source (append-only,
+//!                        one line per observation; claims cite them as evidence)
 //! memory/episodes.jsonl  recall and feedback log
 //! frames/*.json          comprehension frames
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use crate::model::{Commit, CommitId, Op, Refs};
+use crate::model::{Commit, CommitId, Observation, ObservationId, Op, Refs};
 use crate::state::State;
 
 /// Frames written by `init`, embedded from the repo's `frames/` at build time.
@@ -26,6 +28,7 @@ pub const DEFAULT_FRAMES: &[(&str, &str)] = &[
     ("project.json", include_str!("../../../frames/project.json")),
     ("repo.json", include_str!("../../../frames/repo.json")),
     ("site.json", include_str!("../../../frames/site.json")),
+    ("video.json", include_str!("../../../frames/video.json")),
 ];
 
 /// A memory folder.
@@ -277,6 +280,80 @@ impl Repo {
             write(&path, content)?;
         }
         Ok(path)
+    }
+
+    fn observations_dir(&self) -> PathBuf {
+        self.memory_dir().join("observations")
+    }
+
+    /// Every stored observation, file by file (one file per source).
+    ///
+    /// # Errors
+    /// I/O failure or a malformed line.
+    pub fn observations(&self) -> Result<Vec<Observation>> {
+        let dir = self.observations_dir();
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return Ok(Vec::new());
+        };
+        let mut files: Vec<PathBuf> = entries
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .collect();
+        files.sort();
+        let mut out = Vec::new();
+        for path in files {
+            let text = fs::read_to_string(&path).map_err(Error::io(&path))?;
+            for (i, line) in strip_bom(&text).lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let o = serde_json::from_str(line).map_err(|source| Error::Parse {
+                    path: path.clone(),
+                    line: i + 1,
+                    source,
+                })?;
+                out.push(o);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Ids of every stored observation: what claims may cite as evidence.
+    ///
+    /// # Errors
+    /// As [`Repo::observations`].
+    pub fn observation_ids(&self) -> Result<HashSet<ObservationId>> {
+        Ok(self.observations()?.into_iter().map(|o| o.id).collect())
+    }
+
+    /// Append observations not stored yet, each to its source's file. Returns how many were new.
+    ///
+    /// # Errors
+    /// I/O failure.
+    pub fn save_observations(&self, observations: &[Observation]) -> Result<usize> {
+        let mut known = self.observation_ids()?;
+        let dir = self.observations_dir();
+        fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        let mut added = 0;
+        for o in observations {
+            if !known.insert(o.id.clone()) {
+                continue;
+            }
+            let path = dir.join(format!("{}.jsonl", o.source));
+            let mut f = OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&path)
+                .map_err(Error::io(&path))?;
+            let line = serde_json::to_string(o).map_err(|source| Error::Json {
+                path: path.clone(),
+                source,
+            })?;
+            writeln!(f, "{line}").map_err(Error::io(&path))?;
+            added += 1;
+        }
+        Ok(added)
     }
 
     /// Append to the usage log (recall + feedback): the learning signal.

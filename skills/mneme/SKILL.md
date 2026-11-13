@@ -23,6 +23,7 @@ Rules:
 ## Write
 
 - Links → `mneme capture links <file>`: one URL per line plus an optional note. It handles web pages, X posts (including X articles), GitHub repos (+README) and Hugging Face datasets.
+- An organ's output (organon-protocol JSONL, e.g. `organon-video see <url>` → `messages.jsonl`) → `mneme ingest <file>`. Sources, anchors and observed facts are committed; observations go to `memory/observations/` so proposals can cite them as evidence (`"evidence": ["o_…"]`): cite the moment a claim is said or the keyframe that shows it.
 - Interpretation → write a proposal JSON and run `mneme digest <file>`. Follow `docs/DIGEST.md`: state before inferring, place each item on every axis (what / stage / access / peers / fit), extract a post's lesson, leave unknowns empty.
 - Mistakes → `mneme retract <claim-id> --reason "…"`. History is kept.
 - After writing: `mneme build` refreshes the views, then commit `memory/` and `proposals/` with git.

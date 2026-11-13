@@ -17,6 +17,7 @@ One home for each kind of thing. If you can't tell where something goes, it prob
 
 ```bash
 mneme capture …                    # bring something in (stars, READMEs; links and posts in M1)
+mneme ingest <messages.jsonl>      # an organ's perception (video: sources, facts, observations)
 mneme digest proposals/<file>.json # a model's interpretation, checked + evidence-linked
 mneme recall "your question"       # ask; the package says what's known AND what isn't
 mneme feedback <episode> good      # did it help? (trains recall later)
