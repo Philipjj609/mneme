@@ -90,6 +90,9 @@ enum Cmd {
         /// One line per item (~10x cheaper); then `mneme page <id>` for detail
         #[arg(long)]
         brief: bool,
+        /// Ranking as JSON, not logged (for evaluation)
+        #[arg(long)]
+        json: bool,
     },
     /// Rate a recall: the learning signal
     Feedback {
@@ -184,7 +187,8 @@ fn main() -> anyhow::Result<()> {
             budget,
             n,
             brief,
-        } => commands::recall_cmd(&repo, &question.join(" "), budget, n, brief),
+            json,
+        } => commands::recall_cmd(&repo, &question.join(" "), budget, n, brief, json),
         Cmd::Feedback {
             episode,
             verdict,

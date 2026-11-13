@@ -161,9 +161,19 @@ pub struct RecallResult {
     pub items: Vec<Item>,
 }
 
+/// Learned usefulness of anchors (from organon-learning, adopted only after evaluation):
+/// an anchor's score is multiplied by `1 + prior`, the prior clamped to ±0.5.
+pub type Priors = HashMap<String, f32>;
+
 /// Rank the memory's anchors for `query`, best first, at most `max_items`.
 #[must_use]
 pub fn recall(state: &State, query: &str, max_items: usize) -> RecallResult {
+    recall_with(state, query, max_items, &Priors::new())
+}
+
+/// [`recall`] with learned priors.
+#[must_use]
+pub fn recall_with(state: &State, query: &str, max_items: usize, priors: &Priors) -> RecallResult {
     let query_terms: Vec<String> = {
         let mut seen = HashSet::new();
         terms(query)
@@ -182,11 +192,14 @@ pub fn recall(state: &State, query: &str, max_items: usize) -> RecallResult {
     let mut items: Vec<Item> = activation
         .into_iter()
         .filter(|(id, _)| RESULT_KINDS.contains(&id.kind()))
-        .map(|(id, score)| Item {
-            direct: direct.get(&id).map_or(0.0, |(s, _)| s / max),
-            why: why.get(&id).cloned().unwrap_or_default(),
-            id,
-            score,
+        .map(|(id, score)| {
+            let prior = priors.get(id.as_str()).map_or(0.0, |p| p.clamp(-0.5, 0.5));
+            Item {
+                direct: direct.get(&id).map_or(0.0, |(s, _)| s / max),
+                why: why.get(&id).cloned().unwrap_or_default(),
+                id,
+                score: score * (1.0 + prior),
+            }
         })
         .collect();
     items.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));

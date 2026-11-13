@@ -792,3 +792,61 @@ fn recall_returns_videos() {
         "{brief}"
     );
 }
+
+#[test]
+fn learned_priors_rerank_within_bounds() {
+    let (_d, repo) = repo();
+    let s = source("s");
+    repo.commit(
+        "t",
+        "seed",
+        vec![
+            Op::AddSource { source: s.clone() },
+            anchor("concept:agent-memory", "Agent memory"),
+            anchor("concept:memory-palace", "Memory palace"),
+            Op::AddClaim {
+                claim: claim(
+                    "concept:agent-memory",
+                    "defined_as",
+                    Value::Text("what an agent keeps between sessions".into()),
+                    Basis::Inferred,
+                    &s,
+                ),
+            },
+            Op::AddClaim {
+                claim: claim(
+                    "concept:memory-palace",
+                    "defined_as",
+                    Value::Text("a mnemonic of imagined places".into()),
+                    Basis::Inferred,
+                    &s,
+                ),
+            },
+        ],
+    )
+    .unwrap();
+    let st = state(&repo);
+    let plain = recall::recall(&st, "memory", 5);
+    assert_eq!(plain.items.len(), 2, "{:?}", plain.items);
+    let first = plain.items[0].id.to_string();
+    let second = plain.items[1].id.to_string();
+    let priors: recall::Priors = [(first.clone(), -0.5), (second.clone(), 0.5)].into();
+    let learned = recall::recall_with(&st, "memory", 5, &priors);
+    assert_eq!(
+        learned.items[0].id.as_str(),
+        second,
+        "a useful anchor rises"
+    );
+    let wild: recall::Priors = [(first.clone(), -100.0)].into();
+    let clamped = recall::recall_with(&st, "memory", 5, &wild);
+    let score = clamped
+        .items
+        .iter()
+        .find(|i| i.id.as_str() == first)
+        .unwrap()
+        .score;
+    assert!(
+        (score - plain.items[0].score * 0.5).abs() < 1e-6,
+        "priors are clamped to ±0.5"
+    );
+}

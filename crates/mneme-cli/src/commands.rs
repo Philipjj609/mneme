@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use mneme_core::frames::{coverage, profile};
 use mneme_core::model::{ClaimId, Message, Op, Source, SourceId, Status};
 use mneme_core::project::{write_all, BuildInfo};
-use mneme_core::recall::{recall, render, render_brief};
+use mneme_core::recall::{recall_with, render, render_brief};
 use mneme_core::util::now_rfc3339;
 use mneme_core::{Frames, Repo};
 use organon_protocol::{sha256_hex, Proposal};
@@ -325,11 +325,25 @@ pub fn recall_cmd(
     budget: usize,
     n: usize,
     brief: bool,
+    json: bool,
 ) -> anyhow::Result<()> {
     let (lineage, state) = repo.state_at(None)?;
     let frames = Frames::load(&repo.frames_dir())?;
     let head = lineage.last().map(|c| c.id.to_string()).unwrap_or_default();
-    let result = recall(&state, question, n);
+    let result = recall_with(&state, question, n, &repo.recall_priors()?);
+    if json {
+        // For evaluation (organon-learning): the ranking only, nothing logged.
+        let items: Vec<_> = result
+            .items
+            .iter()
+            .map(|i| serde_json::json!({ "id": i.id.as_str(), "score": i.score }))
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({ "query": question, "head": head, "items": items })
+        );
+        return Ok(());
+    }
     let package = if brief {
         render_brief(&state, &frames, &result, &head)
     } else {
@@ -374,6 +388,9 @@ pub fn page(repo: &Repo, id: &str) -> anyhow::Result<()> {
     let a = state
         .anchor(id)
         .with_context(|| format!("unknown anchor {id}"))?;
+    // Opening a page is an implicit "this was useful" signal (learning joins it to the
+    // recall that showed the anchor, by time).
+    repo.append_episode(&serde_json::json!({ "type": "use", "id": id, "time": now_rfc3339() }))?;
     println!(
         "{} ({id})\n{}",
         a.anchor.name,

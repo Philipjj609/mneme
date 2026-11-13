@@ -356,6 +356,30 @@ impl Repo {
         Ok(added)
     }
 
+    /// Recall priors adopted from organon-learning (`memory/learned/recall-priors.json`,
+    /// `{"priors": {"<anchor>": weight}}`); empty when none were adopted.
+    ///
+    /// # Errors
+    /// The file exists but is not valid JSON.
+    pub fn recall_priors(&self) -> Result<crate::recall::Priors> {
+        let path = self.memory_dir().join("learned").join("recall-priors.json");
+        let Ok(text) = fs::read_to_string(&path) else {
+            return Ok(crate::recall::Priors::new());
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(strip_bom(&text)).map_err(|source| Error::Json {
+                path: path.clone(),
+                source,
+            })?;
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(v["priors"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, w)| Some((k.clone(), w.as_f64()? as f32)))
+            .collect())
+    }
+
     /// Append to the usage log (recall + feedback): the learning signal.
     ///
     /// # Errors
