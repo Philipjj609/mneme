@@ -12,6 +12,9 @@
     { "id": "limits", "label": "Limits & failure modes", "relations": ["limitation", "failure_mode"], "hint": "where it breaks, what to watch for" },
     { "id": "adoption", "label": "Adoption", "relations": ["stars"], "hint": "how widely used, over time" },
     { "id": "provenance", "label": "Provenance & license", "relations": ["owned_by", "license"], "hint": "who makes it, under what terms" },
-    { "id": "verdict", "label": "Our verdict", "relations": ["verdict", "tried"], "hint": "have we actually used it, and how did it go" }
+    { "id": "verdict", "label": "Our verdict", "relations": ["verdict", "tried"], "hint": "have we actually used it, and how did it go" },
+    { "id": "topics", "label": "Topics", "relations": ["tagged"], "hint": "its declared topics" },
+    { "id": "stage", "label": "Stage of work", "relations": ["used_at_stage"], "hint": "where in a workflow it is used" },
+    { "id": "referenced_by", "label": "Referenced by", "relations": ["in:links_to", "in:builds_on"], "hint": "posts, pages and repos that point to it or build on it" }
   ]
 }

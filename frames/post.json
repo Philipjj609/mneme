@@ -11,6 +11,7 @@
     { "id": "fit", "label": "Fit for our projects", "relations": ["relevant_to"], "hint": "why it matters to us" },
     { "id": "reach", "label": "Reach", "relations": ["likes"], "hint": "how widely it landed" },
     { "id": "why_saved", "label": "Why Philip saved it", "relations": ["note"], "hint": "his note" },
-    { "id": "limits", "label": "Caveats", "relations": ["limitation", "has_media", "capture_status"], "hint": "what the text alone can't show (video), hype, unverified claims" }
+    { "id": "limits", "label": "Caveats", "relations": ["limitation", "has_media", "capture_status"], "hint": "what the text alone can't show (video), hype, unverified claims" },
+    { "id": "linked_from", "label": "Linked from", "relations": ["in:links_to"], "hint": "what points to this post" }
   ]
 }
