@@ -27,6 +27,7 @@ Rules:
 - Interpretation → write a proposal JSON and run `mneme digest <file>`. Follow `docs/DIGEST.md`: state before inferring, place each item on every axis (what / stage / access / peers / fit), extract a post's lesson, leave unknowns empty.
 - Mistakes → `mneme retract <claim-id> --reason "…"`. History is kept.
 - After writing: `mneme build` refreshes the views, then commit `memory/` and `proposals/` with git.
+- At the end of a session: `organon-learning report` (recall measured against rated and used questions, frame slots to add, duplicates, what to verify). Act on it, and rate the recalls you used: that is what recall learns from.
 
 ## Cost discipline
 
