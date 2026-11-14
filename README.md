@@ -31,7 +31,7 @@ A memory is just a folder (keep it in its own git repo, private if it's personal
 mkdir my-memory && cd my-memory
 mneme init                                   # memory/ + default comprehension frames/
 mneme capture github-stars --user <you>      # your starred repos, as observed facts
-mneme capture links saved.txt                # any links: web pages, X posts, GitHub, Hugging Face
+organon-text read --links saved.txt --person person:philip   # any links, then: mneme ingest <printed .jsonl>
 mneme ingest ~/.organon/video/<id>/messages.jsonl   # what an organ perceived (e.g. organon-video)
 mneme recall "what do I have for agent memory?" --brief
 mneme build                                  # projections/view.html
@@ -101,7 +101,7 @@ The skill ([skills/mneme/SKILL.md](skills/mneme/SKILL.md)) teaches the cheap-fir
 |---|---|
 | `init` | create `memory/` here |
 | `capture github-stars --user U` | starred repos as observed facts |
-| `capture links <file> [--no-follow]` | web pages, X posts/articles/profiles, GitHub repos (+README), HF datasets, with your notes |
+| `capture links <file> [--no-follow]` | deprecated: use [organon-text](https://github.com/Philipjj609/organon-text) `read --links`, then `ingest` |
 | `capture readme owner/name …` | READMEs of repos already in memory |
 | `digest <proposal.json>` | commit an interpretation (validated, evidence-linked) |
 | `recall "<question>" [--brief] [--budget N]` | briefing for a question; logged as an episode |

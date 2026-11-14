@@ -127,7 +127,7 @@ enum Capture {
         #[arg(long, default_value = "person:philip")]
         person: String,
     },
-    /// Links (web pages, X posts/accounts, GitHub repos, HF datasets) with notes
+    /// Links with notes (deprecated: use `organon-text read --links <file>`, then `mneme ingest`)
     Links {
         /// One URL per line, optional note after it; `# group` lines
         file: PathBuf,

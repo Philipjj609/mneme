@@ -22,7 +22,7 @@ Rules:
 
 ## Write
 
-- Links → `mneme capture links <file>`: one URL per line plus an optional note. It handles web pages, X posts (including X articles), GitHub repos (+README) and Hugging Face datasets.
+- Links → `organon-text read --links <file> --person person:philip`, then `mneme ingest <the .jsonl it prints>`. One URL per line plus an optional note. It reads web pages (main content, sections located), X posts and articles, GitHub repos (+README sections), Hugging Face datasets and PDFs (pages located). `mneme capture links` still works but is deprecated: reading moved to [organon-text](https://github.com/Philipjj609/organon-text).
 - An organ's output (organon-protocol JSONL, e.g. `organon-video see <url>` → `messages.jsonl`) → `mneme ingest <file>`. Sources, anchors and observed facts are committed; observations go to `memory/observations/` so proposals can cite them as evidence (`"evidence": ["o_…"]`): cite the moment a claim is said or the keyframe that shows it.
 - Interpretation → write a proposal JSON, check it with `organon audit <file> [--messages <organ output>]` if organon is installed (confident inferences need evidence, and no model may verify its own work), then run `mneme digest <file>`. Follow `docs/DIGEST.md`: state before inferring, place each item on every axis (what / stage / access / peers / fit), extract a post's lesson, leave unknowns empty.
 - Mistakes → `mneme retract <claim-id> --reason "…"`. History is kept.

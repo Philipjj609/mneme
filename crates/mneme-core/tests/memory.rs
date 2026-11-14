@@ -850,3 +850,26 @@ fn learned_priors_rerank_within_bounds() {
         "priors are clamped to ±0.5"
     );
 }
+
+#[test]
+fn ingest_placeholder_anchors_never_rename_known_ones() {
+    // Regression: organon-text names linked things by id only ("x/u" for account:x/u); ingesting
+    // that must not overwrite "@u" that memory already has.
+    use organon_protocol::Message;
+    let (_d, repo) = repo();
+    repo.commit("t", "seed", vec![anchor("account:x/u", "@u")])
+        .unwrap();
+    let Op::AddAnchor { anchor: stub } = anchor("account:x/u", "x/u") else {
+        unreachable!()
+    };
+    let Op::AddAnchor { anchor: fresh } = anchor("site:new.dev", "new.dev") else {
+        unreachable!()
+    };
+    let out = mneme_core::ingest::ops_from_messages(
+        &state(&repo),
+        vec![Message::Anchor(stub), Message::Anchor(fresh)],
+        &Default::default(),
+    )
+    .unwrap();
+    assert_eq!(out.ops.len(), 1, "only the unknown placeholder is added");
+}

@@ -45,6 +45,9 @@ pub fn ops_from_messages(
         let line = i + 1;
         match m {
             Message::Source(s) => batch.add_source(s),
+            // A placeholder (name = the id's name part, no summary) only creates an anchor;
+            // it never renames one memory already knows (organon-text emits these for links).
+            Message::Anchor(a) if is_placeholder(&a) && batch.anchor(a.id.as_str()).is_some() => {}
             Message::Anchor(a) => batch.upsert_anchor(a),
             Message::Observation(o) => observations.push(o),
             Message::Claim(c) => claims.push((line, c)),
@@ -89,6 +92,11 @@ pub fn ops_from_messages(
     } else {
         Err(Error::Rejected(errors))
     }
+}
+
+/// An anchor that says nothing but its id: `site:a.dev` named `a.dev`, without a summary.
+fn is_placeholder(a: &organon_protocol::Anchor) -> bool {
+    a.summary.is_none() && a.name == a.id.name()
 }
 
 fn check_claim(
