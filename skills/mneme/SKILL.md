@@ -19,6 +19,7 @@ Rules:
 - "unknown" / "NOT KNOWN" means the memory doesn't know. Say so; don't fill it in from guesswork.
 - `inferred` claims carry a confidence. `stated` means a source said it, which is different from it being true.
 - After using a recall, rate it: `mneme feedback <episode> good|partial|bad --used id,id --missing "…"`. This trains recall.
+- `mneme recall … --no-log` prints the same briefing but writes no episode and no episode id (for automatic hooks; the question stays out of the tracked log). There is nothing to rate afterwards.
 
 ## Write
 
