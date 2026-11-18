@@ -8,7 +8,7 @@ Most "AI memory" is one of three things: a folder of markdown notes, a vector da
 - **Git-like history.** Commits are content-addressed and chained, and branches are cheap. You can `diff` two points, or rebuild the memory as it was at any commit. Nothing is overwritten: a changed value *supersedes* the old one, which stays in history.
 - **Comprehension you can measure.** Each kind of thing (tool, concept, post, project…) has a *frame*: the slots that understanding it consists of (purpose, mechanism, alternatives, limits…). Filled slots are what's known. **Empty slots are named unknowns**, and they become the research agenda.
 - **Every format is a view.** Graph, nested map, clusters, comprehension grid, history timeline and markdown wiki pages are all compiled from the log and rebuilt whenever you like.
-- **Cheap for AI.** Agents ask through `recall`: a budgeted briefing with *why* each item is included and what is *not* known, or a one-line-per-item `--brief` view at ~25 tokens per item. Every recall is logged and can be rated, which is the signal for recall that learns.
+- **Cheap for AI.** Agents ask through `recall`: a budgeted briefing with *why* each item is included and what is *not* known, or a one-line-per-item `--brief` view at ~25 tokens per item. Every recall is logged and can be rated (unless `--no-log`), which is the signal for recall that learns.
 
 > Status: early but working (Nov 2026). The author runs it on a personal memory of 840+ things and 2,600+ claims (GitHub stars, web tools, X posts and articles), kept in a separate private repo: this repo is the engine only. Design: [docs/DESIGN.md](docs/DESIGN.md) · Plan: [docs/PLAN.md](docs/PLAN.md).
 

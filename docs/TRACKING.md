@@ -9,7 +9,7 @@ One home for each kind of thing. If you can't tell where something goes, it prob
 | **Code** (mneme itself) | git: a branch per change, merged to `main` | normal commits |
 | **Knowledge** (repos, links, posts, concepts, how things work) | `memory/log.jsonl`, also in git | `mneme capture …` (facts) → `mneme digest proposals/….json` (interpretation) |
 | **Decisions, status, open questions** for *any* project | claims on `project:*` in the memory (`decision`, `status`, `question`) | a **session digest**: at the end of each work session, one proposal `proposals/<date>-NN-session-*.json` |
-| **Usage**: what was asked, what came back, whether it helped | `memory/episodes.jsonl` | `mneme recall` logs automatically; `mneme feedback <episode> good\|partial\|bad --used … --missing …` |
+| **Usage**: what was asked, what came back, whether it helped | `memory/episodes.jsonl` | `mneme recall` logs automatically (unless `--no-log`); `mneme feedback <episode> good\|partial\|bad --used … --missing …` |
 | **Why the system is shaped this way** | `docs/DESIGN.md` | rarely edited |
 | **What's next** | `docs/PLAN.md` | ticked as milestones land |
 
