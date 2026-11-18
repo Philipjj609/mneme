@@ -104,7 +104,7 @@ The skill ([skills/mneme/SKILL.md](skills/mneme/SKILL.md)) teaches the cheap-fir
 | `capture links <file> [--no-follow]` | deprecated: use [organon-text](https://github.com/Philipjj609/organon-text) `read --links`, then `ingest` |
 | `capture readme owner/name …` | READMEs of repos already in memory |
 | `digest <proposal.json>` | commit an interpretation (validated, evidence-linked) |
-| `recall "<question>" [--brief] [--budget N]` | briefing for a question; logged as an episode |
+| `recall "<question>" [--brief] [--budget N] [--no-log]` | briefing for a question; logged as an episode unless `--no-log` (for hooks: nothing written, no episode id) |
 | `feedback <episode> good\|partial\|bad [--used ids] [--missing "…"]` | rate a recall |
 | `page <id>` | everything known about one thing, slot by slot |
 | `frontier [--kind K]` | most-connected, least-understood things: what to research next |

@@ -326,6 +326,7 @@ pub fn recall_cmd(
     n: usize,
     brief: bool,
     json: bool,
+    no_log: bool,
 ) -> anyhow::Result<()> {
     let (lineage, state) = repo.state_at(None)?;
     let frames = Frames::load(&repo.frames_dir())?;
@@ -349,6 +350,12 @@ pub fn recall_cmd(
     } else {
         render(&state, &frames, &result, &head, budget)
     };
+    if no_log {
+        // For hooks and other automatic callers: the briefing only. No episode is written (the
+        // question stays out of the git-tracked log) and there is nothing to rate.
+        print!("{}", package.markdown);
+        return Ok(());
+    }
     let episode =
         organon_protocol::short_hash("e_", format!("{question}{}", now_rfc3339()).as_bytes());
     let scores: Vec<(String, f32)> = result

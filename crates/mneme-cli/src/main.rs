@@ -79,7 +79,7 @@ enum Cmd {
     Switch { name: String },
     /// Counts and current branch
     Status,
-    /// Ask the memory: a context package for a question (logged as an episode)
+    /// Ask the memory: a context package for a question (logged as an episode unless --no-log)
     Recall {
         question: Vec<String>,
         /// Token budget for the package (~4 characters per token)
@@ -93,6 +93,10 @@ enum Cmd {
         /// Ranking as JSON, not logged (for evaluation)
         #[arg(long)]
         json: bool,
+        /// Print the briefing but write no episode and no episode line (for hooks: the
+        /// question is not stored in the memory repo, and there is nothing to rate)
+        #[arg(long)]
+        no_log: bool,
     },
     /// Rate a recall: the learning signal
     Feedback {
@@ -188,7 +192,8 @@ fn main() -> anyhow::Result<()> {
             n,
             brief,
             json,
-        } => commands::recall_cmd(&repo, &question.join(" "), budget, n, brief, json),
+            no_log,
+        } => commands::recall_cmd(&repo, &question.join(" "), budget, n, brief, json, no_log),
         Cmd::Feedback {
             episode,
             verdict,
