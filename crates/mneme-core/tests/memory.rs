@@ -873,3 +873,71 @@ fn ingest_placeholder_anchors_never_rename_known_ones() {
     .unwrap();
     assert_eq!(out.ops.len(), 1, "only the unknown placeholder is added");
 }
+
+/// Regression (probe of `project:organon`): a slot with 15 decisions always showed the same 8,
+/// the first in alphabetical order, whatever the question and however large the budget.
+fn project_with_decisions() -> (tempfile::TempDir, Repo) {
+    let (d, repo) = repo();
+    let s = source("s");
+    let mut ops = vec![
+        Op::AddSource { source: s.clone() },
+        anchor("project:organon", "Organon"),
+    ];
+    // The topics sort alphabetically, so "zebra" is far outside the first 8.
+    let topics = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+        "juliet", "kilo", "lima", "mike", "november", "zebra",
+    ];
+    for (i, topic) in topics.iter().enumerate() {
+        ops.push(Op::AddClaim {
+            claim: claim(
+                "project:organon",
+                "decision",
+                Value::Text(format!("{topic} rule: settled on option {i} for {topic}")),
+                Basis::Stated,
+                &s,
+            ),
+        });
+    }
+    repo.commit("t", "seed", ops).unwrap();
+    (d, repo)
+}
+
+fn recall_text(repo: &Repo, question: &str, budget: usize) -> String {
+    let frames = Frames::load(&repo.frames_dir()).unwrap();
+    let st = state(repo);
+    let r = recall::recall(&st, question, 5);
+    recall::render(&st, &frames, &r, "head", budget).markdown
+}
+
+#[test]
+fn recall_shows_the_claims_most_relevant_to_the_question_first() {
+    let (_d, repo) = project_with_decisions();
+    // Tight budget: only the minimum per slot is shown, but it must be the right ones.
+    let zebra = recall_text(&repo, "organon zebra", 100);
+    assert!(zebra.contains("zebra rule"), "{zebra}");
+    let alpha = recall_text(&repo, "organon alpha", 100);
+    assert!(alpha.contains("alpha rule"), "{alpha}");
+    assert!(!alpha.contains("zebra rule"), "{alpha}");
+    assert_ne!(zebra, alpha, "the question changes what is shown");
+}
+
+#[test]
+fn recall_budget_widens_what_a_slot_shows() {
+    let (_d, repo) = project_with_decisions();
+    let tight = recall_text(&repo, "organon", 100);
+    assert_eq!(tight.matches(" rule: settled").count(), 8, "{tight}");
+    let roomy = recall_text(&repo, "organon", 12000);
+    assert_eq!(roomy.matches(" rule: settled").count(), 15, "{roomy}");
+    assert!(!roomy.contains("more in"), "nothing cut, nothing announced");
+}
+
+#[test]
+fn recall_says_what_it_cut_and_where_to_find_it() {
+    let (_d, repo) = project_with_decisions();
+    let tight = recall_text(&repo, "organon", 100);
+    assert!(
+        tight.contains("(+7 more in Decisions: mneme page project:organon)"),
+        "{tight}"
+    );
+}
