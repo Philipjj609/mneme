@@ -238,8 +238,41 @@ fn document(state: &State, id: &AnchorId) -> Vec<String> {
     doc
 }
 
-/// BM25 score of every present anchor that matches, with the terms it matched.
+/// Okapi BM25 of every document against `query` (k1 1.2, b 0.75), with the query terms each one
+/// matched. Documents that match nothing score 0. Shared by anchor recognition and by the
+/// ranking of claims inside a slot, so both rank by the same measure.
 #[allow(clippy::cast_precision_loss)]
+fn bm25(docs: &[Vec<String>], query: &[String]) -> Vec<(f32, Vec<String>)> {
+    let n = docs.len().max(1) as f32;
+    let avg_len = (docs.iter().map(Vec::len).sum::<usize>() as f32 / n).max(1e-6);
+    let mut df: HashMap<&str, f32> = HashMap::new();
+    for doc in docs {
+        for t in doc.iter().map(String::as_str).collect::<HashSet<_>>() {
+            *df.entry(t).or_default() += 1.0;
+        }
+    }
+    let (k1, b) = (1.2_f32, 0.75_f32);
+    docs.iter()
+        .map(|doc| {
+            let mut score = 0.0;
+            let mut hits = Vec::new();
+            for t in query {
+                let tf = doc.iter().filter(|x| *x == t).count() as f32;
+                if tf == 0.0 {
+                    continue;
+                }
+                let d = df[t.as_str()];
+                let idf = ((n - d + 0.5) / (d + 0.5) + 1.0).ln();
+                score +=
+                    idf * tf * (k1 + 1.0) / (tf + k1 * (1.0 - b + b * doc.len() as f32 / avg_len));
+                hits.push(t.clone());
+            }
+            (score, hits)
+        })
+        .collect()
+}
+
+/// BM25 score of every present anchor that matches, with the terms it matched.
 fn recognize(state: &State, query: &[String]) -> HashMap<AnchorId, (f32, Vec<String>)> {
     let ids: Vec<&AnchorId> = state
         .anchors
@@ -247,29 +280,8 @@ fn recognize(state: &State, query: &[String]) -> HashMap<AnchorId, (f32, Vec<Str
         .filter(|id| state.is_present(id.as_str()))
         .collect();
     let docs: Vec<Vec<String>> = ids.iter().map(|id| document(state, id)).collect();
-    let n = docs.len().max(1) as f32;
-    let avg_len = docs.iter().map(Vec::len).sum::<usize>() as f32 / n;
-    let mut df: HashMap<&str, f32> = HashMap::new();
-    for doc in &docs {
-        for t in doc.iter().map(String::as_str).collect::<HashSet<_>>() {
-            *df.entry(t).or_default() += 1.0;
-        }
-    }
-    let (k1, b) = (1.2_f32, 0.75_f32);
     let mut out = HashMap::new();
-    for (id, doc) in ids.iter().zip(&docs) {
-        let mut score = 0.0;
-        let mut hits = Vec::new();
-        for t in query {
-            let tf = doc.iter().filter(|x| *x == t).count() as f32;
-            if tf == 0.0 {
-                continue;
-            }
-            let d = df[t.as_str()];
-            let idf = ((n - d + 0.5) / (d + 0.5) + 1.0).ln();
-            score += idf * tf * (k1 + 1.0) / (tf + k1 * (1.0 - b + b * doc.len() as f32 / avg_len));
-            hits.push(t.clone());
-        }
+    for (id, (score, hits)) in ids.iter().zip(bm25(&docs, query)) {
         if score > 0.0 {
             out.insert((*id).clone(), (score * kind_weight(id.kind()), hits));
         }
@@ -368,12 +380,25 @@ pub struct Package {
     pub omitted: Vec<AnchorId>,
 }
 
+/// Claims shown per slot when the budget is tight; a larger budget widens it (see [`render`]).
+const MIN_SLOT_CLAIMS: usize = 8;
+
 struct RenderedItem {
     text: String,
     unknown: Vec<String>,
+    /// Claims in the fullest slot: the cap at which nothing is cut.
+    widest: usize,
 }
 
-fn render_item(state: &State, frames: &Frames, item: &Item, rank: usize) -> RenderedItem {
+/// Render one item, at most `slot_cap` claims per slot, the ones most relevant to `query` first.
+fn render_item(
+    state: &State,
+    frames: &Frames,
+    item: &Item,
+    rank: usize,
+    query: &[String],
+    slot_cap: usize,
+) -> RenderedItem {
     let anchor = &state.anchors[&item.id].anchor;
     let fills = frames
         .for_kind(anchor.kind())
@@ -393,6 +418,7 @@ fn render_item(state: &State, frames: &Frames, item: &Item, rank: usize) -> Rend
         let _ = writeln!(text, "> {}", summary.replace('\n', " "));
     }
     let mut unknown = Vec::new();
+    let mut widest = 0;
     for fill in fills.iter().flatten() {
         if fill.is_empty() {
             unknown.push(fill.slot.label.clone());
@@ -401,13 +427,14 @@ fn render_item(state: &State, frames: &Frames, item: &Item, rank: usize) -> Rend
         if fill.slot.id == "purpose" && anchor.summary.is_some() && fill.claims.len() == 1 {
             continue; // the summary already shows it
         }
-        let values: Vec<String> = fill
+        widest = widest.max(fill.claims.len());
+        // What each claim shows, scored against the question; the best claims lead the slot.
+        let shown: Vec<String> = fill
             .claims
             .iter()
-            .take(8)
             .map(|cs| {
                 let c = &cs.claim;
-                let shown = if c.about.as_str() == item.id.as_str() {
+                if c.about.as_str() == item.id.as_str() {
                     match &c.value {
                         Value::Anchor(x) => display_name(state, x.as_str()),
                         Value::Number(_) if c.relation.as_str() == "stars" => {
@@ -417,24 +444,45 @@ fn render_item(state: &State, frames: &Frames, item: &Item, rank: usize) -> Rend
                     }
                 } else {
                     display_name(state, c.about.as_str())
-                };
+                }
+            })
+            .collect();
+        let docs: Vec<Vec<String>> = shown.iter().map(|s| terms(s)).collect();
+        let scores = bm25(&docs, query);
+        let mut order: Vec<usize> = (0..shown.len()).collect();
+        // Stable: claims that tie (all of them, when nothing matches) keep the frame's order.
+        order.sort_by(|&a, &b| scores[b].0.total_cmp(&scores[a].0));
+        let values: Vec<String> = order
+            .iter()
+            .take(slot_cap)
+            .map(|&i| {
+                let c = &fill.claims[i].claim;
                 let conf = c.confidence.map(|x| format!(" {x:.2}")).unwrap_or_default();
-                format!("{shown} [{}{conf}]", c.basis.as_str())
+                format!("{} [{}{conf}]", shown[i], c.basis.as_str())
             })
             .collect();
         let more = fill
             .claims
             .len()
-            .checked_sub(8)
+            .checked_sub(slot_cap)
             .filter(|m| *m > 0)
-            .map(|m| format!(" (+{m} more)"))
+            .map(|m| {
+                format!(
+                    " (+{m} more in {}: mneme page {})",
+                    fill.slot.label, item.id
+                )
+            })
             .unwrap_or_default();
         let _ = writeln!(text, "- {}: {}{more}", fill.slot.label, values.join("; "));
     }
     if !unknown.is_empty() {
         let _ = writeln!(text, "- NOT KNOWN: {}", unknown.join(", "));
     }
-    RenderedItem { text, unknown }
+    RenderedItem {
+        text,
+        unknown,
+        widest,
+    }
 }
 
 /// Full package within `budget_tokens` (~4 characters per token).
@@ -459,21 +507,36 @@ pub fn render(
     md.push_str("Bases: observed = read from a source by a tool; stated = said by an author or Philip; inferred = reasoned (with confidence). \"NOT KNOWN\" = empty frame slot. Do not fill it by guessing; say it is unknown.\n\n");
     let (mut included, mut omitted) = (Vec::new(), Vec::new());
     let mut gaps: HashMap<String, usize> = HashMap::new();
+    // Pass 1: every item that fits, each slot cut to its most relevant claims.
+    let mut used = md.len();
+    let mut rendered: Vec<(&Item, RenderedItem)> = Vec::new();
     for item in &result.items {
-        let rendered = render_item(state, frames, item, included.len() + 1);
-        if md.len() + rendered.text.len() > budget_chars && !included.is_empty() {
+        let r = render_item(
+            state,
+            frames,
+            item,
+            included.len() + 1,
+            &result.terms,
+            MIN_SLOT_CLAIMS,
+        );
+        if used + r.text.len() > budget_chars && !included.is_empty() {
             omitted.push(item.id.clone());
             continue;
         }
-        for gap in rendered.unknown {
-            *gaps.entry(gap).or_default() += 1;
+        used += r.text.len() + 1;
+        for gap in &r.unknown {
+            *gaps.entry(gap.clone()).or_default() += 1;
         }
-        md.push_str(&rendered.text);
-        md.push('\n');
         included.push(item.id.clone());
+        rendered.push((item, r));
     }
+    // Which anchors appear is settled here, with the old 8-per-slot sizes: widening below never
+    // pushes an anchor out, it only spends what pass 1 left over. Trade-off: an anchor dropped
+    // in pass 1 stays dropped even though a better-ranked one is then widened with the space.
+    // The footers are built now, since pass 2 must leave room for them.
+    let mut footer = String::new();
     if result.items.is_empty() {
-        md.push_str("Nothing in memory matches this question. That is itself the answer: this area is unexplored.\n");
+        footer.push_str("Nothing in memory matches this question. That is itself the answer: this area is unexplored.\n");
     }
     let mut gaps: Vec<(String, usize)> = gaps.into_iter().collect();
     gaps.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -484,7 +547,7 @@ pub fn render(
             .map(|(k, v)| format!("{k} (missing for {v} of {} items)", included.len()))
             .collect();
         let _ = writeln!(
-            md,
+            footer,
             "## What the memory does not know here\n{}\n",
             listed.join(" · ")
         );
@@ -492,12 +555,41 @@ pub fn render(
     if !omitted.is_empty() {
         let ids: Vec<&str> = omitted.iter().map(AnchorId::as_str).collect();
         let _ = writeln!(
-            md,
+            footer,
             "## Omitted for budget ({}): fetch with `mneme page <id>`\n{}\n",
             omitted.len(),
             ids.join(", ")
         );
     }
+    // Pass 2: spend what is left of the budget (after the footers) on showing more claims per
+    // slot, best-ranked items first. Each gets the largest per-slot cap that still fits.
+    let room = budget_chars.saturating_sub(footer.len());
+    for (idx, (item, r)) in rendered.iter_mut().enumerate() {
+        if r.widest <= MIN_SLOT_CLAIMS {
+            continue;
+        }
+        let (mut lo, mut hi) = (MIN_SLOT_CLAIMS, r.widest);
+        let mut best: Option<RenderedItem> = None;
+        while lo < hi {
+            let cap = lo + (hi - lo).div_ceil(2);
+            let wider = render_item(state, frames, item, idx + 1, &result.terms, cap);
+            if used - r.text.len() + wider.text.len() <= room {
+                lo = cap;
+                best = Some(wider);
+            } else {
+                hi = cap - 1;
+            }
+        }
+        if let Some(wider) = best {
+            used = used - r.text.len() + wider.text.len();
+            *r = wider;
+        }
+    }
+    for (_, r) in &rendered {
+        md.push_str(&r.text);
+        md.push('\n');
+    }
+    md.push_str(&footer);
     Package {
         markdown: md,
         included,
