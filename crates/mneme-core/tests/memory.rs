@@ -877,6 +877,11 @@ fn ingest_placeholder_anchors_never_rename_known_ones() {
 /// Regression (probe of `project:organon`): a slot with 15 decisions always showed the same 8,
 /// the first in alphabetical order, whatever the question and however large the budget.
 fn project_with_decisions() -> (tempfile::TempDir, Repo) {
+    project_with(0)
+}
+
+/// The 15 decisions plus `questions` open questions (a second slot of the same item).
+fn project_with(questions: usize) -> (tempfile::TempDir, Repo) {
     let (d, repo) = repo();
     let s = source("s");
     let mut ops = vec![
@@ -894,6 +899,17 @@ fn project_with_decisions() -> (tempfile::TempDir, Repo) {
                 "project:organon",
                 "decision",
                 Value::Text(format!("{topic} rule: settled on option {i} for {topic}")),
+                Basis::Stated,
+                &s,
+            ),
+        });
+    }
+    for i in 0..questions {
+        ops.push(Op::AddClaim {
+            claim: claim(
+                "project:organon",
+                "question",
+                Value::Text(format!("riddle {i:02}: is mystery {i:02} still open")),
                 Basis::Stated,
                 &s,
             ),
@@ -925,17 +941,93 @@ fn recall_shows_the_claims_most_relevant_to_the_question_first() {
 #[test]
 fn recall_budget_widens_what_a_slot_shows() {
     let (_d, repo) = project_with_decisions();
-    let tight = recall_text(&repo, "organon", 100);
+    let tight = recall_text(&repo, "organon", 1);
+    assert!(
+        tight.len() > 4,
+        "the first item appears even past the budget"
+    );
     assert_eq!(tight.matches(" rule: settled").count(), 8, "{tight}");
     let roomy = recall_text(&repo, "organon", 12000);
     assert_eq!(roomy.matches(" rule: settled").count(), 15, "{roomy}");
     assert!(!roomy.contains("more in"), "nothing cut, nothing announced");
+    // A budget halfway between the two sizes shows something in between, and says so.
+    let halfway = (tight.len() + roomy.len()) / 2 / 4;
+    let middle = recall_text(&repo, "organon", halfway);
+    let shown = middle.matches(" rule: settled").count();
+    assert!((9..15).contains(&shown), "{shown} shown:\n{middle}");
+    assert!(
+        middle.contains(&format!("(+{} more in Decisions", 15 - shown)),
+        "{middle}"
+    );
+    // More budget never shows fewer.
+    let mut last = 0;
+    for tokens in (1..400).step_by(10) {
+        let n = recall_text(&repo, "organon", tokens)
+            .matches(" rule: settled")
+            .count();
+        assert!(n >= last, "{n} < {last} at {tokens} tokens");
+        last = n;
+    }
+}
+
+#[test]
+fn recall_stays_within_the_budget_footers_included() {
+    // Regression: widening used the whole budget and the footers came on top of it.
+    let (_d, repo) = project_with(12);
+    // The first item always appears, so this is the least a package can be.
+    let least = recall_text(&repo, "organon", 1).len();
+    for tokens in (1..700).step_by(7) {
+        let text = recall_text(&repo, "organon", tokens);
+        assert!(
+            text.len() <= (tokens * 4).max(least),
+            "{} chars at {tokens} tokens (least {least}):\n{text}",
+            text.len()
+        );
+    }
+}
+
+#[test]
+fn recall_caps_each_slot_of_an_item_on_its_own() {
+    let (_d, repo) = project_with(12);
+    let tight = recall_text(&repo, "organon", 1);
+    assert_eq!(tight.matches(" rule: settled").count(), 8, "{tight}");
+    assert_eq!(tight.matches("riddle ").count(), 8, "{tight}");
+    assert!(tight.contains("(+7 more in Decisions: mneme page project:organon)"));
+    assert!(tight.contains("(+4 more in Open questions: mneme page project:organon)"));
+    // The question picks the claim inside the slot it belongs to.
+    let q = recall_text(&repo, "organon riddle 11", 1);
+    assert!(q.contains("riddle 11"), "{q}");
+    let roomy = recall_text(&repo, "organon", 12000);
+    assert_eq!(roomy.matches("riddle ").count(), 12, "{roomy}");
+    assert!(!roomy.contains("more in"));
+}
+
+#[test]
+fn recall_keeps_the_frame_order_when_every_claim_ties() {
+    let (_d, repo) = project_with_decisions();
+    // "organon" is in no claim's text, so nothing outranks anything.
+    let tight = recall_text(&repo, "organon", 1);
+    for topic in [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ] {
+        assert!(tight.contains(&format!("{topic} rule")), "{topic}: {tight}");
+    }
+    for topic in [
+        "india", "juliet", "kilo", "lima", "mike", "november", "zebra",
+    ] {
+        assert!(
+            !tight.contains(&format!("{topic} rule")),
+            "{topic}: {tight}"
+        );
+    }
+    // Shown in that order, too.
+    assert!(tight.find("alpha rule") < tight.find("bravo rule"));
 }
 
 #[test]
 fn recall_says_what_it_cut_and_where_to_find_it() {
     let (_d, repo) = project_with_decisions();
-    let tight = recall_text(&repo, "organon", 100);
+    let tight = recall_text(&repo, "organon", 1);
     assert!(
         tight.contains("(+7 more in Decisions: mneme page project:organon)"),
         "{tight}"

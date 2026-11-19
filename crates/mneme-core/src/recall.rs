@@ -530,8 +530,40 @@ pub fn render(
         included.push(item.id.clone());
         rendered.push((item, r));
     }
-    // Pass 2: spend what is left of the budget on showing more claims per slot, best-ranked
-    // items first. Each gets the largest per-slot cap that still fits.
+    // Which anchors appear is settled here, with the old 8-per-slot sizes: widening below never
+    // pushes an anchor out, it only spends what pass 1 left over. Trade-off: an anchor dropped
+    // in pass 1 stays dropped even though a better-ranked one is then widened with the space.
+    // The footers are built now, since pass 2 must leave room for them.
+    let mut footer = String::new();
+    if result.items.is_empty() {
+        footer.push_str("Nothing in memory matches this question. That is itself the answer: this area is unexplored.\n");
+    }
+    let mut gaps: Vec<(String, usize)> = gaps.into_iter().collect();
+    gaps.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if !gaps.is_empty() {
+        let listed: Vec<String> = gaps
+            .iter()
+            .take(6)
+            .map(|(k, v)| format!("{k} (missing for {v} of {} items)", included.len()))
+            .collect();
+        let _ = writeln!(
+            footer,
+            "## What the memory does not know here\n{}\n",
+            listed.join(" · ")
+        );
+    }
+    if !omitted.is_empty() {
+        let ids: Vec<&str> = omitted.iter().map(AnchorId::as_str).collect();
+        let _ = writeln!(
+            footer,
+            "## Omitted for budget ({}): fetch with `mneme page <id>`\n{}\n",
+            omitted.len(),
+            ids.join(", ")
+        );
+    }
+    // Pass 2: spend what is left of the budget (after the footers) on showing more claims per
+    // slot, best-ranked items first. Each gets the largest per-slot cap that still fits.
+    let room = budget_chars.saturating_sub(footer.len());
     for (idx, (item, r)) in rendered.iter_mut().enumerate() {
         if r.widest <= MIN_SLOT_CLAIMS {
             continue;
@@ -541,7 +573,7 @@ pub fn render(
         while lo < hi {
             let cap = lo + (hi - lo).div_ceil(2);
             let wider = render_item(state, frames, item, idx + 1, &result.terms, cap);
-            if used - r.text.len() + wider.text.len() <= budget_chars {
+            if used - r.text.len() + wider.text.len() <= room {
                 lo = cap;
                 best = Some(wider);
             } else {
@@ -557,32 +589,7 @@ pub fn render(
         md.push_str(&r.text);
         md.push('\n');
     }
-    if result.items.is_empty() {
-        md.push_str("Nothing in memory matches this question. That is itself the answer: this area is unexplored.\n");
-    }
-    let mut gaps: Vec<(String, usize)> = gaps.into_iter().collect();
-    gaps.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    if !gaps.is_empty() {
-        let listed: Vec<String> = gaps
-            .iter()
-            .take(6)
-            .map(|(k, v)| format!("{k} (missing for {v} of {} items)", included.len()))
-            .collect();
-        let _ = writeln!(
-            md,
-            "## What the memory does not know here\n{}\n",
-            listed.join(" · ")
-        );
-    }
-    if !omitted.is_empty() {
-        let ids: Vec<&str> = omitted.iter().map(AnchorId::as_str).collect();
-        let _ = writeln!(
-            md,
-            "## Omitted for budget ({}): fetch with `mneme page <id>`\n{}\n",
-            omitted.len(),
-            ids.join(", ")
-        );
-    }
+    md.push_str(&footer);
     Package {
         markdown: md,
         included,
